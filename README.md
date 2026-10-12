@@ -7,14 +7,38 @@ This repository contains only the patch: the new code and the build tool. It doe
 You supply your own copy of the original `VECTOR.apk` (version 1.5.0), and the build turns it into
 `VECTOR-wirepod.apk`. See [Building the APK](#building-the-apk).
 
-Every resource, image, sound, animation, layout, string, native library and Java class is copied from the
-original `VECTOR.apk` byte-for-byte (the build checks this). Only three files inside the APK change:
+Every image, sound, animation, layout, string, native library and original Java class is kept from the
+original `VECTOR.apk` (the build checks that every untouched entry is byte-identical). What changes:
 
 | File | Change |
 |---|---|
 | `assemblies/WirePod.dll` | New: all wire-pod logic (source in `WirePod/`) |
-| `assemblies/chewie.Droid.dll` | Six small patches that call into `WirePod.dll` |
-| `assemblies/ChewieResources.dll` | Analytics turned off in its embedded config |
+| `assemblies/chewie.Droid.dll` | Eight small patches that call into `WirePod.dll` |
+| `assemblies/ChewieResources.dll` | Analytics off; "Extra features" Settings row; Drive and SSH Home tiles |
+| `classes3.dex` | New: the extra screens (source in `android/src/`) plus JSch for SSH |
+| `AndroidManifest.xml`, `resources.arsc`, `res/` | Rebuilt by apktool to register the new screens and icons; every existing resource keeps its ID (checked) |
+| `res/font/ttnorms_*.otf` | AAT tables removed so letters like "c" render correctly on newer Android |
+| `assets/wirepod/ssh_root_key` | Optional: your robot's SSH key, if you put `ssh_root_key` next to `build.ps1` |
+
+## Extra features
+
+**Settings → Extra features** opens wire-pod's options, styled like the rest of the app, without wire-pod's web page:
+
+- **Weather:** pick OpenWeatherMap or WeatherAPI and enter its API key.
+- **Knowledge:** question answering through OpenAI, Together AI, a custom OpenAI-compatible endpoint, or
+  Houndify, plus model, prompt and robot name.
+
+Turn on **Enable extra features** to also get:
+
+- **Talk:** Vector says whatever you type.
+- **Drive:** hold buttons to drive, move his head and raise his lift (also a **Drive** tile on Home).
+- **SSH console:** run commands on an OSKR/WireOS robot with the bundled key (also an **SSH** tile on Home).
+
+Talk and Drive use wire-pod's SDK API, so they need nothing on the robot beyond wire-pod.
+
+> **The bundled SSH key:** if `ssh_root_key` is next to `build.ps1`, it is built into the APK, and setup and
+> the SSH console use it without asking. Anyone with that APK can extract the key, so **keep the APK private**.
+> `.gitignore` keeps the key, keystore and APKs out of git.
 
 ---
 
@@ -174,7 +198,13 @@ wire-pod's own log: `http://<wire-pod>:8080/api/get_debug_logs`.
 
 Windows, with:
 - the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0);
-- a JDK, e.g. [Temurin](https://adoptium.net/), with `keytool` and `jarsigner` on `PATH`;
+- a JDK 11 or newer, e.g. [Temurin](https://adoptium.net/), with `java`, `javac`, `keytool` and `jarsigner` on `PATH`;
+- these files in a `tools/` folder (not committed; download them once):
+  - [`apktool.jar`](https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.10.0.jar) (rename it to `apktool.jar`)
+  - [`r8-8.5.35.jar`](https://dl.google.com/android/maven2/com/android/tools/r8/8.5.35/r8-8.5.35.jar) (provides d8)
+  - [`android-4.1.1.4.jar`](https://repo1.maven.org/maven2/com/google/android/android/4.1.1.4/android-4.1.1.4.jar) (Android API stubs)
+  - [`json-20080701.jar`](https://repo1.maven.org/maven2/org/json/json/20080701/json-20080701.jar)
+  - [`jsch-0.2.20.jar`](https://repo1.maven.org/maven2/com/github/mwiede/jsch/0.2.20/jsch-0.2.20.jar)
 - **the original Vector app, `VECTOR.apk` version 1.5.0** (package `com.anki.vector`, versionCode 108).
   It isn't included here; use your own copy.
 
@@ -198,15 +228,17 @@ The result is `VECTOR-wirepod.apk` in the same folder. dnlib is downloaded from 
 
 `build.cmd` runs `build.ps1` with PowerShell's script restriction bypassed for that run only. Options
 (work with either script): `-Apk <original apk>` (default `VECTOR.apk` next to the script), `-Out <apk>`,
-`-DnlibPath <dnlib.dll>` (use a local dnlib instead of NuGet), `-Keystore` / `-KeystorePassword` / `-KeyAlias`.
+`-DnlibPath <dnlib.dll>` (use a local dnlib instead of NuGet), `-SshKey <file>` (default `ssh_root_key` next to
+the script; skipped if missing), `-Tools <dir>`, `-Keystore` / `-KeystorePassword` / `-KeyAlias`.
 
 The build:
 1. extracts the app's assemblies from the original APK;
 2. compiles `WirePod/*.cs` against them;
-3. patches `chewie.Droid.dll` and `ChewieResources.dll`;
-4. writes a new APK, copying every other entry unchanged; signs it (apksigner if on `PATH`, else
+3. patches `chewie.Droid.dll` and `ChewieResources.dll`, and fixes the fonts;
+4. compiles `android/src/` with JSch into `classes3.dex`, and rebuilds the manifest and resources with apktool;
+5. writes a new APK, copying every other entry unchanged; signs it (apksigner if on `PATH`, else
    jarsigner v1) and aligns it;
-5. verifies: every patch site found exactly once, every reference resolvable against the shipped
+6. verifies: every patch site found exactly once, every reference resolvable against the shipped
    assemblies, no invalid self/module references, every original entry identical, stored entries aligned.
 
 The first build creates `wirepod-debug.keystore` (password `android`). Keep it: builds signed with the same
@@ -217,6 +249,9 @@ key install over each other without losing app data.
 | Path | What |
 |---|---|
 | `WirePod/` | Source of `WirePod.dll` |
+| `android/` | Java source of the extra screens, and their icons |
+| `tools/` | Downloaded build tools (not committed) |
+| `ssh_root_key` | Optional robot SSH key to bundle (not committed) |
 | `Patcher/` | Build tool: extract, IL patching (dnlib), APK repack/align/verify |
 | `build.ps1`, `build.cmd` | Run the whole build |
 | `build/` | Intermediate files (recreated each build, not committed) |

@@ -25,6 +25,12 @@ namespace WirePod
 				onKey(File.ReadAllBytes(SshKeyStore.KeyPath));
 				return;
 			}
+			byte[] bundled = SshKeyStore.ReadBundled();
+			if (bundled != null)
+			{
+				onKey(bundled);
+				return;
+			}
 			Activity activity = Ui.TopActivity;
 			if (activity == null)
 			{
@@ -150,6 +156,28 @@ namespace WirePod
 				}
 			}
 		}
+
+		/// <summary>The key built into this APK (assets/wirepod/ssh_root_key), if the build bundled one.</summary>
+		private static byte[] ReadBundled()
+		{
+			try
+			{
+				using (Stream stream = Application.Context.Assets.Open(SshKeyStore.kBundledKeyAsset))
+				{
+					using (MemoryStream memoryStream = new MemoryStream())
+					{
+						stream.CopyTo(memoryStream);
+						return memoryStream.ToArray();
+					}
+				}
+			}
+			catch (Exception)
+			{
+				return null;
+			}
+		}
+
+		private const string kBundledKeyAsset = "wirepod/ssh_root_key";
 
 		private static string KeyPath
 		{

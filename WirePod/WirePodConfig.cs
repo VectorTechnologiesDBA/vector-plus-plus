@@ -44,6 +44,15 @@ namespace WirePod
 			}
 		}
 
+		/// <summary>The "Extra features" switch (set by the Java ExtrasActivity, same preferences).</summary>
+		public static bool ExtrasEnabled
+		{
+			get
+			{
+				return WirePodConfig.Prefs.GetString("extras_enabled", "0") == "1";
+			}
+		}
+
 		public static void SaveServer(string server, string resolvedIp)
 		{
 			WirePodConfig.Prefs.Edit().PutString(WirePodConfig.kServerKey, server).PutString(WirePodConfig.kServerIpKey, resolvedIp).Apply();

@@ -12,3 +12,4 @@ Patcher/obj/
 ssh_root_key
 *_key
 *.pem
+tools/

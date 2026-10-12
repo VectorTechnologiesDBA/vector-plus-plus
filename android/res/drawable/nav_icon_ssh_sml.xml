@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SSH: a terminal window with a ">_" prompt, drawn like the app's other nav icons (256 grid, #808080 4px outline). -->
+<vector android:height="256.0dip" android:width="256.0dip" android:viewportWidth="256.0" android:viewportHeight="256.0"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <path android:fillColor="#00000000" android:pathData="M54,62h148c3.9,0 7,3.1 7,7v118c0,3.9 -3.1,7 -7,7H54c-3.9,0 -7,-3.1 -7,-7V69c0,-3.9 3.1,-7 7,-7z" android:strokeColor="#ff808080" android:strokeWidth="4.0" android:strokeMiterLimit="10.0" />
+    <path android:fillColor="#00000000" android:pathData="M47,86h162" android:strokeColor="#ff808080" android:strokeWidth="4.0" />
+    <path android:fillColor="#ff808080" android:pathData="M62.7,74a4.3,4.3 0 0,1 8.6,0a4.3,4.3 0 0,1 -8.6,0z" />
+    <path android:fillColor="#ff808080" android:pathData="M76.7,74a4.3,4.3 0 0,1 8.6,0a4.3,4.3 0 0,1 -8.6,0z" />
+    <path android:fillColor="#ff808080" android:pathData="M90.7,74a4.3,4.3 0 0,1 8.6,0a4.3,4.3 0 0,1 -8.6,0z" />
+    <path android:fillColor="#00000000" android:pathData="M76,116l26,22l-26,22" android:strokeColor="#ff808080" android:strokeWidth="4.0" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:fillColor="#00000000" android:pathData="M114,162h40" android:strokeColor="#ff808080" android:strokeWidth="4.0" android:strokeLineCap="round" />
+</vector>

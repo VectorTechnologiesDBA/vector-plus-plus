@@ -16,9 +16,11 @@ namespace Patcher
 	/// Build steps for the wire-pod version of the Vector app (driven by build.ps1):
 	///   extract &lt;apk&gt; &lt;dir&gt;                     copy assemblies/*.dll out of the APK
 	///   patch &lt;refDir&gt; &lt;WirePod.dll&gt; &lt;outDir&gt;    patch chewie.Droid.dll to call into WirePod.dll, turn off analytics in ChewieResources.dll
+	///   fonts &lt;apk&gt; &lt;outDir&gt;                    copy res/font/*.otf without their AAT tables (see FontFix.cs)
 	///   pack &lt;apk&gt; &lt;outApk&gt; &lt;entry=file&gt;...     copy the APK, replacing/adding stored entries, dropping the old signature
+	///                                              (@dir adds every file under dir, named by its path relative to dir)
 	///   align &lt;inApk&gt; &lt;outApk&gt;                 zipalign-equivalent (4 bytes, 4096 for stored .so)
-	///   verify &lt;origApk&gt; &lt;newApk&gt; &lt;entry&gt;...    check every other entry is unchanged and stored entries are aligned
+	///   verify &lt;origApk&gt; &lt;newApk&gt; &lt;entry=file&gt;...    check every other entry is unchanged and stored entries are aligned
 	/// </summary>
 	internal static class Program
 	{
@@ -34,6 +36,9 @@ namespace Patcher
 				case "patch":
 					Program.PatchAssemblies(args[1], args[2], args[3]);
 					return 0;
+				case "fonts":
+					FontFix.FixApkFonts(args[1], args[2]);
+					return 0;
 				case "pack":
 					Program.Pack(args[1], args[2], args.Skip(3).ToArray());
 					return 0;
@@ -42,7 +47,7 @@ namespace Patcher
 					Console.WriteLine("Aligned " + args[2]);
 					return 0;
 				case "verify":
-					return Program.Verify(args[1], args[2], new HashSet<string>(args.Skip(3)));
+					return Program.Verify(args[1], args[2], new HashSet<string>(Program.ExpandEntries(args.Skip(3)).Keys));
 				}
 				Console.Error.WriteLine("usage: Patcher extract|patch|pack|align|verify ... (see Program.cs)");
 				return 2;
@@ -150,12 +155,117 @@ namespace Patcher
 			//    retried forever and every failure is logged into a new file to upload. The resulting flood of threads
 			//    makes the app's old Mono runtime deadlock against Android's thread list lock (seen on Android 15).
 			ModuleDefMD chewieResources = ModuleDefMD.Load(File.ReadAllBytes(Path.Combine(refDir, "ChewieResources.dll")), moduleContext);
-			Program.EditJsonResource(chewieResources, "ChewieResources.Config.DASConfig.json", delegate(JsonObject json)
+			Program.EditJsonResource(chewieResources, "ChewieResources.Config.DASConfig.json", delegate(JsonNode node)
 			{
+				JsonObject json = node.AsObject();
 				json["ShouldSyncNetwork"] = false;
 				// No enabled levels: nothing is queued to disk for upload. Console logging is unaffected.
 				json["LogLevels"] = new JsonArray();
 			});
+
+			// 8. Settings: an "Extra features" row above About; WirePod.Extras opens the Java screens (classes3.dex).
+			Program.EditJsonResource(chewieResources, "ChewieResources.Settings.MainSettingsData.json", delegate(JsonNode node)
+			{
+				JsonArray rows = node["MainSettingsTableObjs"].AsArray();
+				int about = rows.ToList().FindIndex((JsonNode r) => (string)r["NavigationKey"] == "about");
+				Program.Expect(about > 0, "no About row in MainSettingsData.json");
+				rows.Insert(about, new JsonObject
+				{
+					["CellType"] = 1, ["Title"] = "Extra features", ["SubTitle"] = "", ["NavigationKey"] = "wirepod_extras",
+					["IconImageKey"] = "settings_icon_preferences_mini", ["Height"] = 0.1
+				});
+			});
+			TypeDef extras = Program.FindType(wirePod, "WirePod.Extras");
+			MethodDef onRowSelected = Program.FindMethod(Program.FindType(chewie, "chewie.Settings.MainSettingsViewModel"), "OnRowSelected");
+			{
+				// Task t = Extras.OpenSetting(navKey); if (t != null) return t;
+				IList<Instruction> instructions3 = onRowSelected.Body.Instructions;
+				Instruction first = instructions3[0];
+				instructions3.Insert(0, OpCodes.Ldarg_1.ToInstruction());
+				instructions3.Insert(1, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "OpenSetting"))));
+				instructions3.Insert(2, OpCodes.Dup.ToInstruction());
+				Instruction pop = OpCodes.Pop.ToInstruction();
+				instructions3.Insert(3, OpCodes.Brfalse_S.ToInstruction(pop));
+				instructions3.Insert(4, OpCodes.Ret.ToInstruction());
+				instructions3.Insert(5, pop);
+				onRowSelected.Body.SimplifyBranches();
+				onRowSelected.Body.OptimizeBranches();
+				Console.WriteLine("Patched " + onRowSelected.FullName);
+			}
+
+			// 9. Home: Drive and SSH tiles; HandleCellSelected asks Extras.OpenTile(CategoryList[index].Id) first.
+			Program.EditJsonResource(chewieResources, "ChewieResources.ViewData.CategoryCardData.json", delegate(JsonNode node)
+			{
+				JsonArray tiles = node.AsArray();
+				tiles.Add(new JsonObject { ["Id"] = "wirepod_drive", ["CategoryTitle"] = "Drive", ["CategoryIcon"] = "nav_icon_drive_sml", ["FeaturedIndex"] = 0, ["FeatureFlagId"] = "wirepod_extras", ["InfoCardIds"] = new JsonArray() });
+				tiles.Add(new JsonObject { ["Id"] = "wirepod_ssh", ["CategoryTitle"] = "SSH", ["CategoryIcon"] = "nav_icon_ssh_sml", ["FeaturedIndex"] = 0, ["FeatureFlagId"] = "wirepod_extras", ["InfoCardIds"] = new JsonArray() });
+			});
+			MethodDef cellSelected = Program.FindMethod(Program.FindType(chewie, "chewie.Features.Home.HomeFlowModel"), "HandleCellSelected");
+			{
+				// The method starts with this.CategoryList[index].Id: copy those four instructions, then call the hook.
+				IList<Instruction> instructions4 = cellSelected.Body.Instructions;
+				Program.Expect(instructions4[0].OpCode == OpCodes.Ldarg_0 && instructions4[2].OpCode == OpCodes.Ldarg_1
+					&& ((IMethod)instructions4[3].Operand).Name == "get_Item" && ((IMethod)instructions4[4].Operand).Name == "get_Id",
+					cellSelected.FullName + " doesn't start with CategoryList[index].Id");
+				Instruction first = instructions4[0];
+				List<Instruction> load = instructions4.Take(5).Select((Instruction x) => new Instruction(x.OpCode, x.Operand)).ToList();
+				for (int j = 0; j < load.Count; j++)
+				{
+					instructions4.Insert(j, load[j]);
+				}
+				instructions4.Insert(5, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "OpenTile"))));
+				instructions4.Insert(6, OpCodes.Brfalse.ToInstruction(first));
+				instructions4.Insert(7, OpCodes.Ret.ToInstruction());
+				Console.WriteLine("Patched " + cellSelected.FullName);
+			}
+
+			// 10. ResourceHelper.GetResourceIdForIdentifier: fall back to Android's lookup for the new icons.
+			MethodDef getResourceId = Program.FindMethod(Program.FindType(chewie, "chewie.Droid.Helpers.ResourceHelper"), "GetResourceIdForIdentifier");
+			{
+				IMethod resolve = importer.Import(Program.FindMethod(extras, "ResolveResource"));
+				IList<Instruction> instructions5 = getResourceId.Body.Instructions;
+				foreach (Instruction ret in instructions5.Where((Instruction x) => x.OpCode == OpCodes.Ret).ToList())
+				{
+					// ret -> ldarg.0; ldarg.1; call ResolveResource(id, identifier, type); ret (branches to ret still pass through)
+					ret.OpCode = OpCodes.Ldarg_0;
+					ret.Operand = null;
+					int at = instructions5.IndexOf(ret);
+					instructions5.Insert(at + 1, OpCodes.Ldarg_1.ToInstruction());
+					instructions5.Insert(at + 2, OpCodes.Call.ToInstruction(resolve));
+					instructions5.Insert(at + 3, OpCodes.Ret.ToInstruction());
+				}
+				Console.WriteLine("Patched " + getResourceId.FullName);
+			}
+
+			// 11. The Drive/SSH tiles carry feature flag "wirepod_extras": ChewieFeatureFlagService.IsFeatureEnabled answers
+			//     it from the Extra features switch, so Home hides them (and keeps its original layout) when it's off.
+			MethodDef isFeatureEnabled = Program.FindMethod(Program.FindType(chewie, "chewie.Services.ChewieFeatureFlagService"), "IsFeatureEnabled");
+			{
+				IList<Instruction> instructions6 = isFeatureEnabled.Body.Instructions;
+				Instruction first = instructions6[0];
+				instructions6.Insert(0, OpCodes.Ldarg_1.ToInstruction());
+				instructions6.Insert(1, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "IsExtrasFlag"))));
+				instructions6.Insert(2, OpCodes.Brfalse.ToInstruction(first));
+				instructions6.Insert(3, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "ExtrasOn"))));
+				instructions6.Insert(4, OpCodes.Ret.ToInstruction());
+				Console.WriteLine("Patched " + isFeatureEnabled.FullName);
+			}
+
+			// 12. The Explore grid doesn't scroll and sizes each tile as rows * 0.055 of its cell, which is 1.45 screens:
+			//     that fits four rows. With the extra tiles (five rows), Extras makes the cell taller and the factor smaller.
+			MethodDef getView = Program.FindMethod(Program.FindType(chewie, "chewie.Droid.Features.Home.HomeListViewAdapter"), "GetView");
+			{
+				IList<Instruction> instructions7 = getView.Body.Instructions;
+				List<Instruction> heights = instructions7.Where((Instruction x) => x.OpCode == OpCodes.Ldfld && ((IField)x.Operand).Name == "Height").ToList();
+				Program.Expect(heights.Count == 1, "expected one HomeCellData.Height read in " + getView.FullName);
+				instructions7.Insert(instructions7.IndexOf(heights[0]) + 1, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "HomeCellHeight"))));
+				Console.WriteLine("Patched " + getView.FullName);
+			}
+			MethodDef createHolder = Program.FindMethod(Program.FindType(chewie, "chewie.Droid.Features.Home.ExploreRecyclerAdapter"), "OnCreateViewHolder");
+			Instruction factor = createHolder.Body.Instructions.Single((Instruction x) => x.OpCode == OpCodes.Ldc_R4 && Math.Abs((float)x.Operand - 0.055f) < 1e-6f);
+			factor.OpCode = OpCodes.Call;
+			factor.Operand = importer.Import(Program.FindMethod(extras, "ExploreTileFactor"));
+			Console.WriteLine("Patched " + createHolder.FullName);
 
 			Directory.CreateDirectory(outDir);
 			// Keep metadata tokens stable; nothing else in the app has to change.
@@ -173,13 +283,14 @@ namespace Patcher
 		}
 
 		/// <summary>Rewrites an embedded JSON resource in place, keeping its name, attributes and UTF-8 BOM.</summary>
-		private static void EditJsonResource(ModuleDef module, string name, Action<JsonObject> edit)
+		private static void EditJsonResource(ModuleDef module, string name, Action<JsonNode> edit)
 		{
 			int num = module.Resources.ToList().FindIndex((Resource r) => r.Name == name);
 			Program.Expect(num >= 0, "resource not found: " + name);
 			EmbeddedResource embeddedResource = (EmbeddedResource)module.Resources[num];
 			string text = Encoding.UTF8.GetString(embeddedResource.CreateReader().ToArray()).TrimStart('﻿');
-			JsonObject jsonObject = JsonNode.Parse(text).AsObject();
+			// Some of the app's JSON files start with // comments; Newtonsoft (which the app uses) accepts them.
+			JsonNode jsonObject = JsonNode.Parse(text, null, new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
 			edit(jsonObject);
 			string text2 = jsonObject.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
 			byte[] bytes = new UTF8Encoding(true).GetPreamble().Concat(Encoding.UTF8.GetBytes(text2)).ToArray();
@@ -292,14 +403,30 @@ namespace Patcher
 
 		private static void Pack(string apk, string outApk, string[] entries)
 		{
-			Dictionary<string, byte[]> dictionary = new Dictionary<string, byte[]>();
-			foreach (string text in entries)
-			{
-				int num = text.IndexOf('=');
-				dictionary[text.Substring(0, num)] = File.ReadAllBytes(text.Substring(num + 1));
-			}
+			Dictionary<string, byte[]> dictionary = Program.ExpandEntries(entries).ToDictionary((KeyValuePair<string, string> e) => e.Key, (KeyValuePair<string, string> e) => File.ReadAllBytes(e.Value));
 			ApkZip.Rewrite(apk, outApk, dictionary, new Func<string, bool>(ApkZip.IsV1SignatureFile));
 			Console.WriteLine("Packed " + outApk);
+		}
+
+		/// <summary>"entry=file" pairs, and "@dir" for every file under dir (entry = its path relative to dir).</summary>
+		private static Dictionary<string, string> ExpandEntries(IEnumerable<string> entries)
+		{
+			Dictionary<string, string> dictionary = new Dictionary<string, string>();
+			foreach (string text in entries)
+			{
+				if (text.StartsWith("@"))
+				{
+					string root = Path.GetFullPath(text.Substring(1));
+					foreach (string file in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+					{
+						dictionary[Path.GetRelativePath(root, file).Replace(Path.DirectorySeparatorChar, '/')] = file;
+					}
+					continue;
+				}
+				int num = text.IndexOf('=');
+				dictionary[text.Substring(0, num)] = text.Substring(num + 1);
+			}
+			return dictionary;
 		}
 
 		private static int Verify(string originalApk, string newApk, HashSet<string> changed)

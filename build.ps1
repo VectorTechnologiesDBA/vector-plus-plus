@@ -8,7 +8,8 @@
   3. Patches chewie.Droid.dll to call into WirePod.dll and turns off analytics in ChewieResources.dll (see README.md).
   4. Writes a new APK where every other file is copied byte-for-byte, then signs and aligns it.
 
-  Needs the .NET 8 SDK and a JDK (keytool/jarsigner). dnlib is fetched from NuGet.
+  Needs the .NET 8 SDK and a JDK 11+ (javac/keytool/jarsigner). dnlib is fetched from NuGet. The extra screens need
+  these in tools\ (see README.md): apktool.jar, r8-8.5.35.jar, android-4.1.1.4.jar, json-20080701.jar, jsch-0.2.20.jar.
   The original Vector app (VECTOR.apk, 1.5.0) is not included: put it next to this script or pass -Apk.
   If apksigner (Android SDK build-tools) is on PATH it is used instead of jarsigner, adding v2/v3 signatures.
 #>
@@ -16,6 +17,9 @@ param(
 	[string]$Apk = (Join-Path $PSScriptRoot "VECTOR.apk"),
 	[string]$Out = (Join-Path $PSScriptRoot "VECTOR-wirepod.apk"),
 	[string]$DnlibPath = "",
+	# Bundled into the APK so first-time setup can configure the robot without asking. Never commit it or share the APK.
+	[string]$SshKey = (Join-Path $PSScriptRoot "ssh_root_key"),
+	[string]$Tools = (Join-Path $PSScriptRoot "tools"),
 	[string]$Keystore = (Join-Path $PSScriptRoot "wirepod-debug.keystore"),
 	[string]$KeystorePassword = "android",
 	[string]$KeyAlias = "wirepod"
@@ -74,12 +78,51 @@ Invoke-Native dotnet (@((Find-Csc)) + $cscArgs)
 Write-Host "== Patching chewie.Droid.dll and ChewieResources.dll"
 Invoke-Native dotnet @($patcher, "patch", $ref, (Join-Path $build "WirePod.dll"), $patched)
 
+Write-Host "== Fixing fonts (removing AAT tables that newer Android renders oddly)"
+$fonts = Join-Path $build "fonts"
+Invoke-Native dotnet @($patcher, "fonts", $Apk, $fonts)
+
+Write-Host "== Compiling the extra screens (Java) into classes3.dex"
+$java = Join-Path $build "java"
+$cp = @("android-4.1.1.4.jar", "json-20080701.jar", "jsch-0.2.20.jar") | ForEach-Object { Join-Path $Tools $_ }
+Invoke-Native javac (@("--release", "8", "-nowarn", "-encoding", "UTF-8", "-cp", ($cp -join ";"), "-d", (Join-Path $java "cls")) +
+	(Get-ChildItem -Recurse (Join-Path $PSScriptRoot "android\src") -Filter *.java | ForEach-Object { $_.FullName }))
+New-Item -ItemType Directory -Force (Join-Path $java "dex") | Out-Null
+Invoke-Native java (@("-cp", (Join-Path $Tools "r8-8.5.35.jar"), "com.android.tools.r8.D8", "--release", "--min-api", "26",
+	"--lib", $cp[0], "--lib", $cp[1], "--output", (Join-Path $java "dex"), $cp[2]) +
+	(Get-ChildItem -Recurse (Join-Path $java "cls") -Filter *.class | ForEach-Object { $_.FullName }))
+
+Write-Host "== Rebuilding manifest and resources (new activities and icons; existing resource IDs are kept)"
+$res = Join-Path $build "res"
+$apktool = Join-Path $Tools "apktool.jar"
+Invoke-Native java @("-jar", $apktool, "d", "-f", "-s", "-o", (Join-Path $res "src"), $Apk)
+Copy-Item (Join-Path $PSScriptRoot "android\res\drawable\*.xml") (Join-Path $res "src\res\drawable")
+$manifest = Join-Path $res "src\AndroidManifest.xml"
+$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity" | ForEach-Object {
+	"        <activity android:name=`"com.wirepod.extras.$_`" android:theme=`"@android:style/Theme.Material.NoActionBar`" android:screenOrientation=`"$(if ($_ -eq "DriveActivity" -or $_ -eq "SshActivity") { "sensorLandscape" } else { "portrait" })`"/>" }
+(Get-Content -Raw $manifest).Replace("</application>", (($activities -join "`n") + "`n    </application>")) | Set-Content -NoNewline -Encoding utf8 $manifest
+Invoke-Native java @("-jar", $apktool, "b", "-o", (Join-Path $res "res.zip"), (Join-Path $res "src"))
+$resOut = Join-Path $res "out"
+Expand-Archive (Join-Path $res "res.zip") (Join-Path $res "all")
+New-Item -ItemType Directory -Force $resOut | Out-Null
+Move-Item (Join-Path $res "all\AndroidManifest.xml"), (Join-Path $res "all\resources.arsc"), (Join-Path $res "all\res") $resOut
+
 Write-Host "== Packing APK"
 $unsigned = Join-Path $build "unsigned.apk"
-Invoke-Native dotnet @($patcher, "pack", $Apk, $unsigned,
+$replaced = @(
 	"assemblies/chewie.Droid.dll=$(Join-Path $patched 'chewie.Droid.dll')",
 	"assemblies/ChewieResources.dll=$(Join-Path $patched 'ChewieResources.dll')",
 	"assemblies/WirePod.dll=$(Join-Path $patched 'WirePod.dll')")
+$replaced += "@$resOut"
+# After the rebuilt res/ so the fixed fonts win.
+$replaced += Get-ChildItem (Join-Path $fonts "*.otf") | ForEach-Object { "res/font/$($_.Name)=$($_.FullName)" }
+$replaced += "classes3.dex=$(Join-Path $java 'dex\classes.dex')"
+if (Test-Path $SshKey) {
+	Write-Host "   Bundling SSH key $SshKey (keep this APK private)"
+	$replaced += "assets/wirepod/ssh_root_key=$((Resolve-Path $SshKey).Path)"
+}
+else { Write-Host "   No SSH key at $SshKey; setup will ask for the key file instead" }
+Invoke-Native dotnet (@($patcher, "pack", $Apk, $unsigned) + $replaced)
 
 if (-not (Test-Path $Keystore)) {
 	Write-Host "== Creating signing key $Keystore"
@@ -106,5 +149,5 @@ else {
 }
 
 Write-Host "== Checking the result"
-Invoke-Native dotnet @($patcher, "verify", $Apk, $Out, "assemblies/chewie.Droid.dll", "assemblies/ChewieResources.dll", "assemblies/WirePod.dll")
+Invoke-Native dotnet (@($patcher, "verify", $Apk, $Out) + $replaced)
 Write-Host "Built $Out"
