@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
+  <!-- dnlib comes from NuGet; pass -p:DnlibPath=...\dnlib.dll to use a local copy (e.g. the one shipped with dnSpy) instead. -->
+  <ItemGroup Condition="'$(DnlibPath)' == ''">
+    <PackageReference Include="dnlib" Version="4.4.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(DnlibPath)' != ''">
+    <Reference Include="dnlib">
+      <HintPath>$(DnlibPath)</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

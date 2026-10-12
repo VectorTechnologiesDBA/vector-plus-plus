@@ -1,0 +1,14 @@
+# Build output
+build/
+Patcher/bin/
+Patcher/obj/
+
+# Anki's original app and the patched result are not distributed here
+*.apk
+
+# Secrets: signing keys and robot SSH keys
+*.keystore
+*.jks
+ssh_root_key
+*_key
+*.pem
