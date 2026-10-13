@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
 using Android.Runtime;
+using chewie.Settings;
 using core.Services;
 
 namespace WirePod
@@ -22,6 +23,32 @@ namespace WirePod
 		{
 			return index + 1;
 		}
+
+		/// <summary>
+		/// use teal if eye color is out of range instead of crashing
+		/// </summary>
+		public static EyeColorCollectionData EyeColorOrDefault(EyeColorCollectionData current)
+		{
+			if (current != null)
+			{
+				return current;
+			}
+			if (Extras._fallbackEyeColor == null)
+			{
+				EyeColorCollectionData data = new EyeColorCollectionData();
+				data.Id = 0;
+				data.Name = "EyeColor.colorName.0";
+				data.Enabled = true;
+				data.EyeColor.R = 0.21f;
+				data.EyeColor.G = 0.76f;
+				data.EyeColor.B = 0.44f;
+				data.EyeColor.A = 1f;
+				Extras._fallbackEyeColor = data;
+			}
+			return Extras._fallbackEyeColor;
+		}
+
+		private static EyeColorCollectionData _fallbackEyeColor;
 
 		/// <summary>
 		/// Hook at the start of RobotSettingsService.SetEyeColor (a preset picked in Settings). A custom eye color

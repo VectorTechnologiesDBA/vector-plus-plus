@@ -174,6 +174,14 @@ namespace Patcher
 					["CellType"] = 1, ["Title"] = "Extra features", ["SubTitle"] = "", ["NavigationKey"] = "wirepod_extras",
 					["IconImageKey"] = "settings_icon_preferences_mini", ["Height"] = 0.1
 				});
+				// Eanable hidden matrix green
+				JsonNode matrix = node["EyeColorCollectionObjs"].AsArray().ToList().Single((JsonNode c) => (int)c["Id"] == 6);
+				matrix["Name"] = "EyeColor.colorName.6";
+				matrix["Enabled"] = true;
+				matrix["EyeColor"]["R"] = 0.0;
+				matrix["EyeColor"]["G"] = 1.0;
+				matrix["EyeColor"]["B"] = 0.25;
+				matrix["EyeColor"]["A"] = 1.0;
 				// Custom eye color, backported from app 1.8 (EyeColorActivity), right below the preset eye colors (the header
 				// row). MainSettingsViewModel.NetworkIndex is shifted to match (patch 14).
 				rows.Insert(1, new JsonObject
@@ -284,6 +292,33 @@ namespace Patcher
 			MethodDef networkIndex = Program.FindMethod(Program.FindType(chewie, "chewie.Settings.MainSettingsViewModel"), "get_NetworkIndex");
 			Program.HookReturnValue(networkIndex, importer.Import(Program.FindMethod(extras, "ShiftSettingsIndex")));
 			Console.WriteLine("Patched " + networkIndex.FullName);
+
+			// 14b. Fix for when robot's eye color isn't in the defined eye color list
+			{
+				TypeDef mainSettingsVm = Program.FindType(chewie, "chewie.Settings.MainSettingsViewModel");
+				MethodDef getEyeColorName = Program.FindMethod(mainSettingsVm, "GetEyeColorDisplayName");
+				FieldDef dataField = mainSettingsVm.Fields.Single((FieldDef f) => f.Name == "_MainSettingsData");
+				FieldDef eyeColorsField = Program.FindType(chewie, "chewie.Settings.MainSettingsData").Fields.Single((FieldDef f) => f.Name == "EyeColorCollectionObjs");
+				IMethod listGetItem = chewie.GetTypes().SelectMany((TypeDef t) => t.Methods).Where((MethodDef m) => m.HasBody)
+					.SelectMany((MethodDef m) => m.Body.Instructions)
+					.Where((Instruction x) => x.OpCode == OpCodes.Callvirt && x.Operand is IMethod im && im.Name == "get_Item" && im.DeclaringType != null && im.DeclaringType.FullName.Contains("EyeColorCollectionData"))
+					.Select((Instruction x) => (IMethod)x.Operand).First();
+				IList<Instruction> il14 = getEyeColorName.Body.Instructions;
+				Program.Expect(il14.Count(x => x.OpCode == OpCodes.Ret) == 1 && il14[il14.Count - 1].OpCode == OpCodes.Ret, "unexpected IL in " + getEyeColorName.FullName);
+				Instruction ret14 = il14[il14.Count - 1];
+				int at14 = il14.Count - 1;
+				il14.Insert(at14++, OpCodes.Dup.ToInstruction());
+				il14.Insert(at14++, OpCodes.Brtrue.ToInstruction(ret14));
+				il14.Insert(at14++, OpCodes.Pop.ToInstruction());
+				il14.Insert(at14++, OpCodes.Ldarg_0.ToInstruction());
+				il14.Insert(at14++, OpCodes.Ldfld.ToInstruction(dataField));
+				il14.Insert(at14++, OpCodes.Ldfld.ToInstruction(eyeColorsField));
+				il14.Insert(at14++, OpCodes.Ldc_I4_0.ToInstruction());
+				il14.Insert(at14++, OpCodes.Callvirt.ToInstruction(listGetItem));
+				getEyeColorName.Body.SimplifyBranches();
+				getEyeColorName.Body.OptimizeBranches();
+				Console.WriteLine("Patched " + getEyeColorName.FullName);
+			}
 
 			// 15. MvvmCross's MvxLayoutInflater.CreateCustomViewInternal swaps the context through the hidden field
 			//     LayoutInflater.mConstructorArgs, which Android 10+ blocks for apps targeting it (crash on the first screen).
