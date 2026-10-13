@@ -105,7 +105,7 @@ and sign in again; the dialog appears pre-filled with the current address.
 | Sign in | `accounts.api.anki.com` | Gone | Answered on the phone |
 | Pair over Bluetooth | Sends a session token to the robot, which asks its **token server** for a client token | Fine: wire-pod is the token server and accepts any token | Unchanged |
 | Get the robot's TLS certificate | `session-certs.token.global.anki-services.com/vic/<esn>` | Gone | `http://<wire-pod>:<port>/session-certs/<esn>` |
-| Firmware update during setup | `ota.global.anki-services.com/...` | Gone | `http://<wire-pod>:<port>/api/get_ota/vicos-2.0.1.6076ep.ota` |
+| Firmware update during setup | `ota.global.anki-services.com/...` | Gone | `http://archive.org/download/Anki-proto-prod-Vector-firmware/prod/2.0.1.6086ep.ota` (escape-pod 2.0.1.6086ep) |
 | Analytics | Anki's AWS queue | Account suspended; failed uploads retried forever, flooding the app with threads | Turned off |
 
 ### Robots that don't know about wire-pod

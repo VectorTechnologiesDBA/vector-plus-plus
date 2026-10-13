@@ -15,14 +15,48 @@ namespace WirePod
 	{
 		public const string SettingsNavKey = "wirepod_extras";
 
+		public const string EyeColorNavKey = "wirepod_eyecolor";
+
+		/// <summary>Hook for MainSettingsViewModel.NetworkIndex: the Custom eye color row sits above the Wi-Fi row.</summary>
+		public static int ShiftSettingsIndex(int index)
+		{
+			return index + 1;
+		}
+
+		/// <summary>
+		/// Hook at the start of RobotSettingsService.SetEyeColor (a preset picked in Settings). A custom eye color
+		/// (backported from app 1.8) overrides presets on the robot, so ask wire-pod to switch it off.
+		/// </summary>
+		public static void PresetEyeColorPicked(int eyeColor)
+		{
+			Task.Run(delegate
+			{
+				try
+				{
+					WirePodApi.Get("/api-sdk/eye_color?serial=" + WirePodApi.Escape(WirePodApi.RobotSerial()) + "&color=" + eyeColor);
+				}
+				catch (Exception ex)
+				{
+					DAS.Warn("WirePod.Extras.PresetEyeColorPicked", ex.Message);
+				}
+			});
+		}
+
 		/// <summary>Hook for MainSettingsViewModel.OnRowSelected: a finished task when handled, otherwise null.</summary>
 		public static Task OpenSetting(string navKey)
 		{
-			if (navKey != Extras.SettingsNavKey)
+			if (navKey == Extras.SettingsNavKey)
+			{
+				Extras.Start("ExtrasActivity");
+			}
+			else if (navKey == Extras.EyeColorNavKey)
+			{
+				Extras.Start("EyeColorActivity");
+			}
+			else
 			{
 				return null;
 			}
-			Extras.Start("ExtrasActivity");
 			return Task.Run(delegate
 			{
 			});

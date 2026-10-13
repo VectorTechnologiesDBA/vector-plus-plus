@@ -174,6 +174,13 @@ namespace Patcher
 					["CellType"] = 1, ["Title"] = "Extra features", ["SubTitle"] = "", ["NavigationKey"] = "wirepod_extras",
 					["IconImageKey"] = "settings_icon_preferences_mini", ["Height"] = 0.1
 				});
+				// Custom eye color, backported from app 1.8 (EyeColorActivity), right below the preset eye colors (the header
+				// row). MainSettingsViewModel.NetworkIndex is shifted to match (patch 14).
+				rows.Insert(1, new JsonObject
+				{
+					["CellType"] = 1, ["Title"] = "Custom eye color", ["SubTitle"] = "", ["NavigationKey"] = "wirepod_eyecolor",
+					["IconImageKey"] = "settings_icon_preferences_mini", ["Height"] = 0.1
+				});
 			});
 			TypeDef extras = Program.FindType(wirePod, "WirePod.Extras");
 			MethodDef onRowSelected = Program.FindMethod(Program.FindType(chewie, "chewie.Settings.MainSettingsViewModel"), "OnRowSelected");
@@ -266,6 +273,17 @@ namespace Patcher
 			factor.OpCode = OpCodes.Call;
 			factor.Operand = importer.Import(Program.FindMethod(extras, "ExploreTileFactor"));
 			Console.WriteLine("Patched " + createHolder.FullName);
+
+			// 13. RobotSettingsService.SetEyeColor: picking a preset also switches off the custom eye color.
+			MethodDef setEyeColor = Program.FindMethod(Program.FindType(chewie, "chewie.Features.Settings.RobotSettingsService"), "SetEyeColor");
+			setEyeColor.Body.Instructions.Insert(0, OpCodes.Ldarg_1.ToInstruction());
+			setEyeColor.Body.Instructions.Insert(1, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "PresetEyeColorPicked"))));
+			Console.WriteLine("Patched " + setEyeColor.FullName);
+
+			// 14. MainSettingsViewModel.NetworkIndex is a fixed row position (1 or 2); the eye color row above it adds one.
+			MethodDef networkIndex = Program.FindMethod(Program.FindType(chewie, "chewie.Settings.MainSettingsViewModel"), "get_NetworkIndex");
+			Program.HookReturnValue(networkIndex, importer.Import(Program.FindMethod(extras, "ShiftSettingsIndex")));
+			Console.WriteLine("Patched " + networkIndex.FullName);
 
 			Directory.CreateDirectory(outDir);
 			// Keep metadata tokens stable; nothing else in the app has to change.

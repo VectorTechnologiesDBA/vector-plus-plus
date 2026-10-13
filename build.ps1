@@ -98,7 +98,7 @@ $apktool = Join-Path $Tools "apktool.jar"
 Invoke-Native java @("-jar", $apktool, "d", "-f", "-s", "-o", (Join-Path $res "src"), $Apk)
 Copy-Item (Join-Path $PSScriptRoot "android\res\drawable\*.xml") (Join-Path $res "src\res\drawable")
 $manifest = Join-Path $res "src\AndroidManifest.xml"
-$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity" | ForEach-Object {
+$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity" | ForEach-Object {
 	"        <activity android:name=`"com.wirepod.extras.$_`" android:theme=`"@android:style/Theme.Material.NoActionBar`" android:screenOrientation=`"$(if ($_ -eq "DriveActivity" -or $_ -eq "SshActivity") { "sensorLandscape" } else { "portrait" })`"/>" }
 (Get-Content -Raw $manifest).Replace("</application>", (($activities -join "`n") + "`n    </application>")) | Set-Content -NoNewline -Encoding utf8 $manifest
 Invoke-Native java @("-jar", $apktool, "b", "-o", (Join-Path $res "res.zip"), (Join-Path $res "src"))

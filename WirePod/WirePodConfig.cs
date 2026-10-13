@@ -71,19 +71,13 @@ namespace WirePod
 		}
 
 		/// <summary>
-		/// Replaces RobotCommunicationService.OtaUrl. The robot downloads this itself, so prefer the
-		/// IP address resolved at sign-in over a .local name the robot's updater may not resolve.
-		/// wire-pod proxies the escape-pod firmware from archive.org at this path.
+		/// Replaces RobotCommunicationService.OtaUrl: the firmware Vector downloads (himself) when the app updates him,
+		/// e.g. from recovery mode. Escape-pod firmware 2.0.1.6086ep from the Internet Archive, over plain HTTP: the
+		/// robot's updater may not have a correct clock or current certificates for HTTPS.
 		/// </summary>
 		public static string OtaUrl(string ankiOtaUrl)
 		{
-			string server = WirePodConfig.Server;
-			string text = WirePodConfig.Prefs.GetString(WirePodConfig.kServerIpKey, null);
-			if (!string.IsNullOrEmpty(text))
-			{
-				server = text + ":" + WirePodConfig.GetPort(server);
-			}
-			return "http://" + server + "/api/get_ota/" + WirePodConfig.kEscapePodOta;
+			return WirePodConfig.kOtaUrl;
 		}
 
 		/// <summary>
@@ -181,7 +175,7 @@ namespace WirePod
 
 		public const int kDefaultWebPort = 8080;
 
-		private const string kEscapePodOta = "vicos-2.0.1.6076ep.ota";
+		private const string kOtaUrl = "http://archive.org/download/Anki-proto-prod-Vector-firmware/prod/2.0.1.6086ep.ota";
 
 		private const string kPrefsName = "wirepod";
 
