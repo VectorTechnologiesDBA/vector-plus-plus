@@ -17,6 +17,7 @@ original `VECTOR.apk` (the build checks that every untouched entry is byte-ident
 | `assemblies/ChewieResources.dll` | Analytics off; "Extra features" Settings row; Drive and SSH Home tiles |
 | `classes3.dex` | New: the extra screens (source in `android/src/`) plus JSch for SSH |
 | `AndroidManifest.xml`, `resources.arsc`, `res/` | Rebuilt by apktool to register the new screens and icons; every existing resource keeps its ID (checked) |
+| Android target | Raised from 8.1 (API 27) to 15 (API 35), so newer Android doesn't warn the app is outdated. This needs: plain HTTP allowed (wire-pod), heap pointer tagging off (the 2019 Mono runtime crashes on it), the Android 12+ Bluetooth/notification permissions (asked at startup), `PendingIntent` and runtime-receiver calls in the bundled Java libraries routed through `Compat`, a public replacement for MvvmCross's blocked hidden-API use, and Android 15's edge-to-edge layout turned off |
 | `res/font/ttnorms_*.otf` | AAT tables removed so letters like "c" render correctly on newer Android |
 | `assets/wirepod/ssh_root_key` | Optional: your robot's SSH key, if you put `ssh_root_key` next to `build.ps1` |
 
@@ -205,6 +206,10 @@ Windows, with:
   - [`android-4.1.1.4.jar`](https://repo1.maven.org/maven2/com/google/android/android/4.1.1.4/android-4.1.1.4.jar) (Android API stubs)
   - [`json-20080701.jar`](https://repo1.maven.org/maven2/org/json/json/20080701/json-20080701.jar)
   - [`jsch-0.2.20.jar`](https://repo1.maven.org/maven2/com/github/mwiede/jsch/0.2.20/jsch-0.2.20.jar)
+  - `apksigner.jar` from [Android build-tools 35.0.1](https://dl.google.com/android/repository/build-tools_r35.0.1_windows.zip)
+    (inside the zip at `android-15/lib/apksigner.jar`). Required: apps targeting Android 11+ need a v2 signature.
+  - `android-35/android.jar` from [Android platform 35](https://dl.google.com/android/repository/platform-35_r02.zip)
+    (the Android 15 framework; apktool needs it to build the resources)
 - **the original Vector app, `VECTOR.apk` version 1.5.0** (package `com.anki.vector`, versionCode 108).
   It isn't included here; use your own copy.
 

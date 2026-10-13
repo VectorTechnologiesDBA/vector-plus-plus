@@ -92,27 +92,76 @@ Invoke-Native java (@("-cp", (Join-Path $Tools "r8-8.5.35.jar"), "com.android.to
 	"--lib", $cp[0], "--lib", $cp[1], "--output", (Join-Path $java "dex"), $cp[2]) +
 	(Get-ChildItem -Recurse (Join-Path $java "cls") -Filter *.class | ForEach-Object { $_.FullName }))
 
-Write-Host "== Rebuilding manifest and resources (new activities and icons; existing resource IDs are kept)"
+Write-Host "== Rebuilding manifest, resources and dex (new screens and icons, Android 15 target; resource IDs are kept)"
 $res = Join-Path $build "res"
 $apktool = Join-Path $Tools "apktool.jar"
-Invoke-Native java @("-jar", $apktool, "d", "-f", "-s", "-o", (Join-Path $res "src"), $Apk)
+Invoke-Native java @("-jar", $apktool, "d", "-f", "-o", (Join-Path $res "src"), $Apk)
 Copy-Item (Join-Path $PSScriptRoot "android\res\drawable\*.xml") (Join-Path $res "src\res\drawable")
 $manifest = Join-Path $res "src\AndroidManifest.xml"
 $activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity" | ForEach-Object {
 	"        <activity android:name=`"com.wirepod.extras.$_`" android:theme=`"@android:style/Theme.Material.NoActionBar`" android:screenOrientation=`"$(if ($_ -eq "DriveActivity" -or $_ -eq "SshActivity") { "sensorLandscape" } else { "portrait" })`"/>" }
 (Get-Content -Raw $manifest).Replace("</application>", (($activities -join "`n") + "`n    </application>")) | Set-Content -NoNewline -Encoding utf8 $manifest
-Invoke-Native java @("-jar", $apktool, "b", "-o", (Join-Path $res "res.zip"), (Join-Path $res "src"))
+# Target Android 15 (API 35) so newer Android stops warning that the app is for an old Android version. That needs:
+#  - android:exported on components with intent filters (Android 12);
+#  - the Android 12 Bluetooth permissions (requested at runtime by WirePod.Permissions);
+#  - PendingIntents that say whether they're mutable (Android 12): every PendingIntent.get* call in the app's own
+#    dex files (Appboy, Firebase, support library) goes through com.wirepod.extras.Compat, which adds FLAG_IMMUTABLE;
+#  - receivers registered at runtime that say whether they're exported (Android 14): same idea, Compat.registerReceiver;
+#  - allowing plain HTTP (Android 9), which wire-pod uses;
+#  - turning off heap pointer tagging (Android 11), which the old Mono runtime crashes on;
+#  - opting out of Android 15's forced edge-to-edge layout, which this app's screens weren't designed for.
+$yml = Join-Path $res "src\apktool.yml"
+(Get-Content -Raw $yml) -replace "targetSdkVersion: '?\d+'?", "targetSdkVersion: '35'" | Set-Content -NoNewline -Encoding utf8 $yml
+$text = Get-Content -Raw $manifest
+$text = $text.Replace('<activity android:icon="@mipmap/ic_launcher" android:name=', '<activity android:exported="true" android:icon="@mipmap/ic_launcher" android:name=')
+# Android 11+ tags heap pointers (top byte) for apps targeting it; the app's 2019 Mono runtime can't cope and aborts
+# at startup (mini-arm64.c assertion), so opt out.
+# wire-pod (and the firmware download) are plain HTTP, which Android 9+ blocks by default for apps targeting it.
+$text = $text.Replace('<application android:allowBackup="true"', '<application android:allowNativeHeapPointerTagging="false" android:usesCleartextTraffic="true" android:allowBackup="true"')
+$text = $text.Replace('<receiver android:name="com.appboy.AppboyFcmReceiver"', '<receiver android:exported="true" android:name="com.appboy.AppboyFcmReceiver"')
+$text = $text.Replace('<uses-permission android:name="android.permission.BLUETOOTH"/>', ('<uses-permission android:name="android.permission.BLUETOOTH"/>' +
+	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_SCAN`"/>" +
+	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_CONNECT`"/>" +
+	"`n    <uses-permission android:name=`"android.permission.ACCESS_FINE_LOCATION`"/>" +
+	"`n    <uses-permission android:name=`"android.permission.POST_NOTIFICATIONS`"/>" +
+	"`n    <queries><intent><action android:name=`"android.intent.action.VIEW`"/><data android:scheme=`"https`"/></intent>" +
+	"<intent><action android:name=`"android.intent.action.SENDTO`"/><data android:scheme=`"mailto`"/></intent></queries>"))
+Set-Content -NoNewline -Encoding utf8 $manifest $text
+$rewired = 0
+foreach ($smali in Get-ChildItem -Recurse (Join-Path $res "src") -Filter *.smali) {
+	$code = [IO.File]::ReadAllText($smali.FullName)
+	$new = [regex]::Replace($code, "Landroid/app/PendingIntent;->(getActivity|getActivities|getBroadcast|getService)\(", "Lcom/wirepod/extras/Compat;->`$1(")
+	# invoke-virtual {ctx, receiver, filter[, permission, handler]}, Context->registerReceiver(...) becomes a static call
+	# with the same registers, the Context passed first.
+	$new = [regex]::Replace($new, "invoke-virtual(/range)? (\{[^}]*\}), Landroid/content/Context;->registerReceiver\(",
+		"invoke-static`$1 `$2, Lcom/wirepod/extras/Compat;->registerReceiver(Landroid/content/Context;")
+	if ($new -ne $code) { [IO.File]::WriteAllText($smali.FullName, $new); $rewired++ }
+}
+Write-Host "   PendingIntent/registerReceiver calls rewired in $rewired classes"
+$styles = Join-Path $res "src\res\values\styles.xml"
+$optOut = "`n        <item name=`"android:windowOptOutEdgeToEdgeEnforcement`">true</item>"
+$xml = [regex]::Replace((Get-Content -Raw $styles), '(<style name="Chewie[^"]*"[^>]*?)\s*/>', "`$1>$optOut`n    </style>")
+$xml = [regex]::Replace($xml, '(<style name="Chewie[^"]*"[^>]*[^/]>)(?!\s*<item name="android:windowOptOut)', "`$1$optOut")
+Set-Content -NoNewline -Encoding utf8 $styles $xml
+# Build against the Android 15 framework (tools\android-35\android.jar) so the API 35 theme attribute resolves.
+$framework = Join-Path $Tools "apktool-framework"
+if (-not (Test-Path (Join-Path $framework "1.apk"))) {
+	Invoke-Native java @("-jar", $apktool, "if", (Join-Path $Tools "android-35\android.jar"), "-p", $framework)
+}
+Invoke-Native java @("-jar", $apktool, "b", "-p", $framework, "-o", (Join-Path $res "res.zip"), (Join-Path $res "src"))
 $resOut = Join-Path $res "out"
 Expand-Archive (Join-Path $res "res.zip") (Join-Path $res "all")
 New-Item -ItemType Directory -Force $resOut | Out-Null
-Move-Item (Join-Path $res "all\AndroidManifest.xml"), (Join-Path $res "all\resources.arsc"), (Join-Path $res "all\res") $resOut
+Move-Item (Join-Path $res "all\AndroidManifest.xml"), (Join-Path $res "all\resources.arsc"), (Join-Path $res "all\res"),
+	(Join-Path $res "all\classes.dex"), (Join-Path $res "all\classes2.dex") $resOut
 
 Write-Host "== Packing APK"
 $unsigned = Join-Path $build "unsigned.apk"
 $replaced = @(
 	"assemblies/chewie.Droid.dll=$(Join-Path $patched 'chewie.Droid.dll')",
 	"assemblies/ChewieResources.dll=$(Join-Path $patched 'ChewieResources.dll')",
-	"assemblies/WirePod.dll=$(Join-Path $patched 'WirePod.dll')")
+	"assemblies/WirePod.dll=$(Join-Path $patched 'WirePod.dll')",
+	"assemblies/MvvmCross.Binding.Droid.dll=$(Join-Path $patched 'MvvmCross.Binding.Droid.dll')")
 $replaced += "@$resOut"
 # After the rebuilt res/ so the fixed fonts win.
 $replaced += Get-ChildItem (Join-Path $fonts "*.otf") | ForEach-Object { "res/font/$($_.Name)=$($_.FullName)" }
@@ -130,23 +179,17 @@ if (-not (Test-Path $Keystore)) {
 		"-alias", $KeyAlias, "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000", "-dname", "CN=Vector wire-pod build")
 }
 
+# Android 11+ only installs apps targeting it (this build targets 15) with a v2+ signature, so apksigner is required:
+# tools\apksigner.jar (from Android build-tools, see README.md) or apksigner on PATH. It signs the whole file, so align first.
+$apksignerJar = Join-Path $Tools "apksigner.jar"
 $apksigner = Get-Command apksigner -ErrorAction SilentlyContinue
-if ($apksigner) {
-	# apksigner signs the whole file, so align first.
-	Write-Host "== Aligning and signing with apksigner"
-	Invoke-Native dotnet @($patcher, "align", $unsigned, $Out)
-	Invoke-Native $apksigner.Source @("sign", "--ks", $Keystore, "--ks-pass", "pass:$KeystorePassword", "--ks-key-alias", $KeyAlias, $Out)
-	Invoke-Native $apksigner.Source @("verify", $Out)
-}
-else {
-	# jarsigner (v1 signature, fine for this app's targetSdk 27) rewrites the zip, so align afterwards.
-	Write-Host "== Signing with jarsigner, then aligning"
-	$signed = Join-Path $build "signed.apk"
-	Invoke-Native jarsigner @("-keystore", $Keystore, "-storepass", $KeystorePassword, "-sigalg", "SHA256withRSA", "-digestalg", "SHA-256",
-		"-signedjar", $signed, $unsigned, $KeyAlias)
-	Invoke-Native dotnet @($patcher, "align", $signed, $Out)
-	Invoke-Native jarsigner @("-verify", $Out)
-}
+if (Test-Path $apksignerJar) { $signer = @("java", "-jar", $apksignerJar) }
+elseif ($apksigner) { $signer = @($apksigner.Source) }
+else { throw "apksigner not found. Put apksigner.jar in $Tools (see README.md) or add Android build-tools to PATH." }
+Write-Host "== Aligning and signing with apksigner (v1 + v2 + v3)"
+Invoke-Native dotnet @($patcher, "align", $unsigned, $Out)
+Invoke-Native $signer[0] (@($signer | Select-Object -Skip 1) + @("sign", "--ks", $Keystore, "--ks-pass", "pass:$KeystorePassword", "--ks-key-alias", $KeyAlias, $Out))
+Invoke-Native $signer[0] (@($signer | Select-Object -Skip 1) + @("verify", $Out))
 
 Write-Host "== Checking the result"
 Invoke-Native dotnet (@($patcher, "verify", $Apk, $Out) + $replaced)

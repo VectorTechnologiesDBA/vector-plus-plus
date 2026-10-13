@@ -285,10 +285,46 @@ namespace Patcher
 			Program.HookReturnValue(networkIndex, importer.Import(Program.FindMethod(extras, "ShiftSettingsIndex")));
 			Console.WriteLine("Patched " + networkIndex.FullName);
 
+			// 15. MvvmCross's MvxLayoutInflater.CreateCustomViewInternal swaps the context through the hidden field
+			//     LayoutInflater.mConstructorArgs, which Android 10+ blocks for apps targeting it (crash on the first screen).
+			//     Before that block: on Android 10+, use the public createView(Context, ...) instead and skip the block.
+			ModuleDefMD mvxBinding = ModuleDefMD.Load(File.ReadAllBytes(Path.Combine(refDir, "MvvmCross.Binding.Droid.dll")), moduleContext);
+			{
+				MethodDef createCustom = Program.FindMethod(Program.FindType(mvxBinding, "MvvmCross.Binding.Droid.Views.MvxLayoutInflater"), "CreateCustomViewInternal");
+				IList<Instruction> il = createCustom.Body.Instructions;
+				Instruction block = il.Single((Instruction x) => x.OpCode == OpCodes.Ldfld && ((IField)x.Operand).Name == "_constructorArgs"
+					&& il.IndexOf(x) > 0 && il[il.IndexOf(x) - 1].OpCode == OpCodes.Ldarg_0 && il[il.IndexOf(x) + 1].OpCode == OpCodes.Brtrue_S);
+				Instruction start = il[il.IndexOf(block) - 1];
+				Instruction end = il[il.Count - 2];
+				Program.Expect(il[il.Count - 1].OpCode == OpCodes.Ret && end.OpCode == OpCodes.Ldarg_2, createCustom.FullName + " doesn't end with return view");
+				Importer mvxImporter = new Importer(mvxBinding, ImporterOptions.TryToUseDefs);
+				TypeDef inflater = Program.FindType(wirePod, "WirePod.Inflater");
+				int at = il.IndexOf(start);
+				Instruction[] added =
+				{
+					OpCodes.Call.ToInstruction(mvxImporter.Import(Program.FindMethod(inflater, "UseCreateViewWithContext"))),
+					OpCodes.Brfalse.ToInstruction(start),
+					OpCodes.Ldarg_0.ToInstruction(),
+					OpCodes.Ldarg_3.ToInstruction(),
+					OpCodes.Ldarg_S.ToInstruction(createCustom.Parameters[4]),
+					OpCodes.Ldarg_S.ToInstruction(createCustom.Parameters[5]),
+					OpCodes.Call.ToInstruction(mvxImporter.Import(Program.FindMethod(inflater, "CreateView"))),
+					OpCodes.Starg_S.ToInstruction(createCustom.Parameters[2]),
+					OpCodes.Br.ToInstruction(end)
+				};
+				for (int k = 0; k < added.Length; k++)
+				{
+					il.Insert(at + k, added[k]);
+				}
+				// The branch that fell through into the block (view == null) now falls into the new code first.
+				Console.WriteLine("Patched " + createCustom.FullName);
+			}
+
 			Directory.CreateDirectory(outDir);
 			// Keep metadata tokens stable; nothing else in the app has to change.
 			chewie.Write(Path.Combine(outDir, "chewie.Droid.dll"), Program.PreservingWriterOptions(chewie));
 			chewieResources.Write(Path.Combine(outDir, "ChewieResources.dll"), Program.PreservingWriterOptions(chewieResources));
+			mvxBinding.Write(Path.Combine(outDir, "MvvmCross.Binding.Droid.dll"), Program.PreservingWriterOptions(mvxBinding));
 			wirePod.Write(Path.Combine(outDir, "WirePod.dll"));
 			Program.CheckReferences(outDir, refDir);
 		}

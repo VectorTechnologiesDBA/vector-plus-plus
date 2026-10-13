@@ -27,6 +27,8 @@ namespace WirePod
 			RobotSetup._Service = service;
 			service.Messaging.ReceivedRobotRtsCloudSessionResponse += RobotSetup.OnCloudSessionResponse;
 			service.Messaging.ReceivedRobotMessageRtsWifiIpResponse += RobotSetup.OnRobotIp;
+			// Robot communication starts here, so make sure Android 12+ lets the app use Bluetooth.
+			Permissions.RequestWhenReady();
 		}
 
 		/// <summary>
