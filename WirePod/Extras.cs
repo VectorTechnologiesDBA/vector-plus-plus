@@ -18,6 +18,19 @@ namespace WirePod
 
 		public const string EyeColorNavKey = "wirepod_eyecolor";
 
+		public const string UpdateNavKey = "wirepod_update";
+
+		/// <summary>Hook at the start of AboutSettingsViewModel.OnRowSelected: true when the row was ours (Check for updates).</summary>
+		public static bool OpenAboutRow(string navKey)
+		{
+			if (navKey != Extras.UpdateNavKey)
+			{
+				return false;
+			}
+			Extras.Start("UpdateActivity");
+			return true;
+		}
+
 		/// <summary>Hook for MainSettingsViewModel.NetworkIndex: the Custom eye color row sits above the Wi-Fi row.</summary>
 		public static int ShiftSettingsIndex(int index)
 		{

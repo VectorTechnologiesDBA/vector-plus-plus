@@ -355,6 +355,25 @@ namespace Patcher
 				Console.WriteLine("Patched " + createCustom.FullName);
 			}
 
+			// 16. Settings > About: "Check for updates" (UpdateActivity) as the first row.
+			Program.EditJsonResource(chewieResources, "ChewieResources.Settings.AboutSettingsData.json", delegate(JsonNode node)
+			{
+				node["AboutSettingsTableObjs"].AsArray().Insert(0, new JsonObject
+				{
+					["CellType"] = 0, ["Title"] = "Check for updates", ["NavigationKey"] = "wirepod_update", ["Height"] = 0.1
+				});
+			});
+			MethodDef aboutRow = Program.FindMethod(Program.FindType(chewie, "chewie.Features.Settings.AboutSettingsViewModel"), "OnRowSelected");
+			{
+				IList<Instruction> il16 = aboutRow.Body.Instructions;
+				Instruction first16 = il16[0];
+				il16.Insert(0, OpCodes.Ldarg_1.ToInstruction());
+				il16.Insert(1, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "OpenAboutRow"))));
+				il16.Insert(2, OpCodes.Brfalse.ToInstruction(first16));
+				il16.Insert(3, OpCodes.Ret.ToInstruction());
+				Console.WriteLine("Patched " + aboutRow.FullName);
+			}
+
 			Directory.CreateDirectory(outDir);
 			// Keep metadata tokens stable; nothing else in the app has to change.
 			chewie.Write(Path.Combine(outDir, "chewie.Droid.dll"), Program.PreservingWriterOptions(chewie));

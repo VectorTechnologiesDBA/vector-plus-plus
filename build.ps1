@@ -84,7 +84,8 @@ Invoke-Native dotnet @($patcher, "fonts", $Apk, $fonts)
 
 Write-Host "== Compiling the extra screens (Java) into classes3.dex"
 $java = Join-Path $build "java"
-$cp = @("android-4.1.1.4.jar", "json-20080701.jar", "jsch-0.2.20.jar") | ForEach-Object { Join-Path $Tools $_ }
+# The Android 15 API (it includes org.json) so screens can use newer APIs such as PackageInstaller.
+$cp = @("android-35\android.jar", "json-20080701.jar", "jsch-0.2.20.jar") | ForEach-Object { Join-Path $Tools $_ }
 Invoke-Native javac (@("--release", "8", "-nowarn", "-encoding", "UTF-8", "-cp", ($cp -join ";"), "-d", (Join-Path $java "cls")) +
 	(Get-ChildItem -Recurse (Join-Path $PSScriptRoot "android\src") -Filter *.java | ForEach-Object { $_.FullName }))
 New-Item -ItemType Directory -Force (Join-Path $java "dex") | Out-Null
@@ -98,8 +99,8 @@ $apktool = Join-Path $Tools "apktool.jar"
 Invoke-Native java @("-jar", $apktool, "d", "-f", "-o", (Join-Path $res "src"), $Apk)
 Copy-Item (Join-Path $PSScriptRoot "android\res\drawable\*.xml") (Join-Path $res "src\res\drawable")
 $manifest = Join-Path $res "src\AndroidManifest.xml"
-$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity" | ForEach-Object {
-	"        <activity android:name=`"com.wirepod.extras.$_`" android:theme=`"@android:style/Theme.Material.NoActionBar`" android:screenOrientation=`"$(if ($_ -eq "DriveActivity" -or $_ -eq "SshActivity") { "sensorLandscape" } else { "portrait" })`"/>" }
+$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity", "UpdateActivity" | ForEach-Object {
+	"        <activity android:name=`"com.wirepod.extras.$_`" android:theme=`"@android:style/Theme.Material.NoActionBar`" android:screenOrientation=`"$(if ($_ -eq "DriveActivity" -or $_ -eq "SshActivity") { "sensorLandscape" } else { "portrait" })`"$(if ($_ -eq "UpdateActivity") { ' android:launchMode="singleTop"' })/>" }
 (Get-Content -Raw $manifest).Replace("</application>", (($activities -join "`n") + "`n    </application>")) | Set-Content -NoNewline -Encoding utf8 $manifest
 # Target Android 15 (API 35) so newer Android stops warning that the app is for an old Android version. That needs:
 #  - android:exported on components with intent filters (Android 12);
@@ -124,6 +125,7 @@ $text = $text.Replace('<uses-permission android:name="android.permission.BLUETOO
 	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_CONNECT`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.ACCESS_FINE_LOCATION`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.POST_NOTIFICATIONS`"/>" +
+	"`n    <uses-permission android:name=`"android.permission.REQUEST_INSTALL_PACKAGES`"/>" +
 	"`n    <queries><intent><action android:name=`"android.intent.action.VIEW`"/><data android:scheme=`"https`"/></intent>" +
 	"<intent><action android:name=`"android.intent.action.SENDTO`"/><data android:scheme=`"mailto`"/></intent></queries>"))
 Set-Content -NoNewline -Encoding utf8 $manifest $text
