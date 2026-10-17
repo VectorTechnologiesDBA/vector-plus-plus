@@ -53,6 +53,12 @@ namespace WirePod
 			}
 		}
 
+		/// <summary>One extra feature's own switch (prefs "feat_drive", "feat_ssh", "feat_quick"); on unless switched off.</summary>
+		public static bool FeatureEnabled(string name)
+		{
+			return WirePodConfig.Prefs.GetString("feat_" + name, "1") == "1";
+		}
+
 		public static void SaveServer(string server, string resolvedIp)
 		{
 			WirePodConfig.Prefs.Edit().PutString(WirePodConfig.kServerKey, server).PutString(WirePodConfig.kServerIpKey, resolvedIp).Apply();

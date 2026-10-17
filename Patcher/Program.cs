@@ -212,8 +212,9 @@ namespace Patcher
 			Program.EditJsonResource(chewieResources, "ChewieResources.ViewData.CategoryCardData.json", delegate(JsonNode node)
 			{
 				JsonArray tiles = node.AsArray();
-				tiles.Add(new JsonObject { ["Id"] = "wirepod_drive", ["CategoryTitle"] = "Drive", ["CategoryIcon"] = "nav_icon_drive_sml", ["FeaturedIndex"] = 0, ["FeatureFlagId"] = "wirepod_extras", ["InfoCardIds"] = new JsonArray() });
-				tiles.Add(new JsonObject { ["Id"] = "wirepod_ssh", ["CategoryTitle"] = "SSH", ["CategoryIcon"] = "nav_icon_ssh_sml", ["FeaturedIndex"] = 0, ["FeatureFlagId"] = "wirepod_extras", ["InfoCardIds"] = new JsonArray() });
+				tiles.Add(new JsonObject { ["Id"] = "wirepod_drive", ["CategoryTitle"] = "Drive", ["CategoryIcon"] = "nav_icon_drive_sml", ["FeaturedIndex"] = 0, ["FeatureFlagId"] = "wirepod_drive", ["InfoCardIds"] = new JsonArray() });
+				tiles.Add(new JsonObject { ["Id"] = "wirepod_ssh", ["CategoryTitle"] = "SSH", ["CategoryIcon"] = "nav_icon_ssh_sml", ["FeaturedIndex"] = 0, ["FeatureFlagId"] = "wirepod_ssh", ["InfoCardIds"] = new JsonArray() });
+				tiles.Add(new JsonObject { ["Id"] = "wirepod_quick", ["CategoryTitle"] = "Quick Actions", ["CategoryIcon"] = "nav_icon_quickactions_sml", ["FeaturedIndex"] = 0, ["FeatureFlagId"] = "wirepod_quick", ["InfoCardIds"] = new JsonArray() });
 			});
 			MethodDef cellSelected = Program.FindMethod(Program.FindType(chewie, "chewie.Features.Home.HomeFlowModel"), "HandleCellSelected");
 			{
@@ -252,8 +253,8 @@ namespace Patcher
 				Console.WriteLine("Patched " + getResourceId.FullName);
 			}
 
-			// 11. The Drive/SSH tiles carry feature flag "wirepod_extras": ChewieFeatureFlagService.IsFeatureEnabled answers
-			//     it from the Extra features switch, so Home hides them (and keeps its original layout) when it's off.
+			// 11. The Drive/SSH/Quick Actions tiles carry feature flags (their ids): ChewieFeatureFlagService.IsFeatureEnabled answers
+			//     them from the Extra features switches, so Home hides them (and keeps its original layout) when it's off.
 			MethodDef isFeatureEnabled = Program.FindMethod(Program.FindType(chewie, "chewie.Services.ChewieFeatureFlagService"), "IsFeatureEnabled");
 			{
 				IList<Instruction> instructions6 = isFeatureEnabled.Body.Instructions;
@@ -261,8 +262,9 @@ namespace Patcher
 				instructions6.Insert(0, OpCodes.Ldarg_1.ToInstruction());
 				instructions6.Insert(1, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "IsExtrasFlag"))));
 				instructions6.Insert(2, OpCodes.Brfalse.ToInstruction(first));
-				instructions6.Insert(3, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "ExtrasOn"))));
-				instructions6.Insert(4, OpCodes.Ret.ToInstruction());
+				instructions6.Insert(3, OpCodes.Ldarg_1.ToInstruction());
+				instructions6.Insert(4, OpCodes.Call.ToInstruction(importer.Import(Program.FindMethod(extras, "FeatureOn"))));
+				instructions6.Insert(5, OpCodes.Ret.ToInstruction());
 				Console.WriteLine("Patched " + isFeatureEnabled.FullName);
 			}
 

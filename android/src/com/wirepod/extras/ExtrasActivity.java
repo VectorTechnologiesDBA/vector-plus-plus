@@ -34,8 +34,30 @@ public class ExtrasActivity extends Screen {
         if (Wp.extrasEnabled(this)) {
             heading("Vector");
             open("Talk", TalkActivity.class);
-            open("Drive", DriveActivity.class);
-            open("SSH console", SshActivity.class);
+            feature("Drive", "drive", DriveActivity.class);
+            feature("SSH console", "ssh", SshActivity.class);
+            feature("Quick actions", "quick", QuickActionsActivity.class);
+            note("Each switch also shows or hides that feature's tile on the Home screen. Reopen the app after changing them.");
+        }
+    }
+
+    /** A feature with its own on/off switch; when on, a row opens it. */
+    private void feature(String label, final String key, Class<?> screen) {
+        Switch sw = new Switch(this);
+        sw.setText(label);
+        sw.setTextColor(WHITE);
+        sw.setTextSize(16);
+        sw.setPadding(dp(4), dp(12), dp(4), dp(4));
+        sw.setChecked(Wp.featureEnabled(this, key));
+        sw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton b, boolean on) {
+                Wp.setFeatureEnabled(ExtrasActivity.this, key, on);
+                recreate();
+            }
+        });
+        body.addView(sw);
+        if (Wp.featureEnabled(this, key)) {
+            open("Open " + label.toLowerCase(), screen);
         }
     }
 

@@ -42,6 +42,15 @@ final class Wp {
         prefs(c).edit().putString(KEY_EXTRAS, on ? "1" : "0").apply();
     }
 
+    /** One extra feature's own switch ("drive", "ssh", "quick"); on unless switched off. */
+    static boolean featureEnabled(Context c, String name) {
+        return "1".equals(prefs(c).getString("feat_" + name, "1"));
+    }
+
+    static void setFeatureEnabled(Context c, String name, boolean on) {
+        prefs(c).edit().putString("feat_" + name, on ? "1" : "0").apply();
+    }
+
     static String enc(String s) {
         try {
             return URLEncoder.encode(s == null ? "" : s, "UTF-8");

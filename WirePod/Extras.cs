@@ -114,41 +114,72 @@ namespace WirePod
 			{
 				screen = "SshActivity";
 			}
+			else if (categoryId == "wirepod_quick")
+			{
+				screen = "QuickActionsActivity";
+			}
 			else
 			{
 				return false;
 			}
-			// With extra features switched off, show the menu (and its switch) instead.
-			Extras.Start(WirePodConfig.ExtrasEnabled ? screen : "ExtrasActivity");
+			// If the feature has been switched off since Home was built, show the menu (and its switches) instead.
+			Extras.Start(Extras.FeatureOn(categoryId) ? screen : "ExtrasActivity");
 			return true;
 		}
 
-		public const string FeatureFlagId = "wirepod_extras";
+		/// <summary>The Home tiles Extra features can add; each has its own switch on the Extra features page.</summary>
+		private static readonly string[] kTiles = new string[] { "wirepod_drive", "wirepod_ssh", "wirepod_quick" };
 
-		/// <summary>Hook for ChewieFeatureFlagService.IsFeatureEnabled: our flag follows the Extra features switch.</summary>
+		/// <summary>Hook for ChewieFeatureFlagService.IsFeatureEnabled: our tiles' feature flags (= their ids).</summary>
 		public static bool IsExtrasFlag(string featureId)
 		{
-			return featureId == Extras.FeatureFlagId;
+			return Array.IndexOf(Extras.kTiles, featureId) >= 0;
 		}
 
-		public static bool ExtrasOn()
+		/// <summary>A tile shows when Extra features is on and its own switch is on (prefs feat_drive etc., default on).</summary>
+		public static bool FeatureOn(string featureId)
 		{
-			return WirePodConfig.ExtrasEnabled;
+			return WirePodConfig.ExtrasEnabled && WirePodConfig.FeatureEnabled(featureId.Substring("wirepod_".Length));
 		}
 
 		/// <summary>
-		/// Home's Explore grid doesn't scroll; its cell is 1.45 screens tall and each tile is rows * 0.055 of that, which
-		/// fits four rows. With the Drive/SSH tiles shown there are five, so use a taller cell and a smaller factor
-		/// (same tile size). With extras off, the original values are kept.
+		/// Home's Explore grid doesn't scroll. Its cell is 1.45 screens tall and each tile is rows * 0.055 of that: the
+		/// original seven tiles in four rows, each 0.319 screens tall. With extra tiles, size the cell for the rows needed
+		/// (plus room above the status bar) and pick the factor that keeps tiles the same size. Nothing extra: original values.
 		/// </summary>
+		private static int ExploreRows()
+		{
+			int extra = 0;
+			foreach (string tile in Extras.kTiles)
+			{
+				if (Extras.FeatureOn(tile))
+				{
+					extra++;
+				}
+			}
+			return (7 + extra + 1) / 2;
+		}
+
+		private const float kTileHeight = 0.319f;
+
 		public static float HomeCellHeight(float height)
 		{
-			return (WirePodConfig.ExtrasEnabled && Math.Abs(height - 1.45f) < 0.001f) ? 2.0f : height;
+			int rows = Extras.ExploreRows();
+			if (rows <= 4 || Math.Abs(height - 1.45f) >= 0.001f)
+			{
+				return height;
+			}
+			return rows * Extras.kTileHeight + 0.25f;
 		}
 
 		public static float ExploreTileFactor()
 		{
-			return WirePodConfig.ExtrasEnabled ? 0.0319f : 0.055f;
+			int rows = Extras.ExploreRows();
+			if (rows <= 4)
+			{
+				return 0.055f;
+			}
+			return Extras.kTileHeight / (Extras.HomeCellHeight(1.45f) * rows);
 		}
 
 		/// <summary>
