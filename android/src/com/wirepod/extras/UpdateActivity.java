@@ -25,7 +25,7 @@ import java.net.URL;
  */
 public class UpdateActivity extends Screen {
     /** This build's version. Keep it in step with the release tag (v1.2.1 etc.). */
-    static final String VERSION = "1.2.2";
+    static final String VERSION = "1.2.3";
     static final String RELEASES = "https://api.github.com/repos/VectorTechnologiesDBA/vector-plus-plus/releases/latest";
     private static final String ACTION_INSTALLED = "com.wirepod.extras.UPDATE_STATUS";
 
