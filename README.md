@@ -3,6 +3,10 @@
 Vector++ patches the original Anki Vector Android app (1.5.0) so it works with a
 [wire-pod](https://github.com/kercre123/wire-pod) server instead of Anki's cloud, which no longer exists.
 
+> **Project status:** Vector++ 1.2.4 is the last planned update for the foreseeable future: it does what I set
+> out to do. I'm still happy to fix problems, so please report bugs in
+> [GitHub Issues](https://github.com/VectorTechnologiesDBA/vector-plus-plus/issues).
+
 This repository contains only the patch: the new code and the build tool. It does **not** contain Anki's app.
 You supply your own copy of the original `VECTOR.apk` (version 1.5.0), and the build turns it into
 `VECTOR-wirepod.apk`. See [Building the APK](#building-the-apk).
@@ -21,7 +25,15 @@ original `VECTOR.apk` (the build checks that every untouched entry is byte-ident
 | `res/font/ttnorms_*.otf` | AAT tables removed so letters like "c" render correctly on newer Android |
 | `assets/wirepod/ssh_root_key` | Optional: your robot's SSH key, if you put `ssh_root_key` next to `build.ps1` |
 
-## Extra features
+## Features
+
+On top of working with wire-pod, Vector++ adds:
+
+- **Custom eye colors** (backported from app 1.8): any hue and saturation, in Settings right below the standard
+  colors, plus the hidden **Confusion Matrix Green** preset (thanks @switch-modder).
+- **Check for updates** in **Settings → About**: shows the latest release's notes and installs it.
+- **Android 15 support**: no "built for an older version" warning on current phones.
+- **Firmware updates** from the Internet Archive (escape-pod 2.0.1.6086ep).
 
 **Settings → Extra features** opens wire-pod's options, styled like the rest of the app, without wire-pod's web page:
 
@@ -29,13 +41,14 @@ original `VECTOR.apk` (the build checks that every untouched entry is byte-ident
 - **Knowledge:** question answering through OpenAI, Together AI, a custom OpenAI-compatible endpoint, or
   Houndify, plus model, prompt and robot name.
 
-Turn on **Enable extra features** to also get:
+Turn on **Enable extra features** to also get **Talk** (Vector says whatever you type), and these, each with its
+own switch and Home tile:
 
-- **Talk:** Vector says whatever you type.
-- **Drive:** hold buttons to drive, move his head and raise his lift (also a **Drive** tile on Home).
-- **SSH console:** run commands on an OSKR/WireOS robot with the bundled key (also an **SSH** tile on Home).
+- **Drive:** landscape live camera, a joystick for driving, head and lift buttons, and a box to make him talk.
+- **SSH console:** a landscape root shell on an OSKR/WireOS robot, using the bundled key.
+- **Quick actions:** one tap to start exploring, return to the charger, find his cube, or go to sleep.
 
-Talk and Drive use wire-pod's SDK API, so they need nothing on the robot beyond wire-pod.
+Talk, Drive and Quick actions use wire-pod's SDK API, so they need nothing on the robot beyond wire-pod.
 
 > **The bundled SSH key:** if `ssh_root_key` is next to `build.ps1`, it is built into the APK, and setup and
 > the SSH console use it without asking. Anyone with that APK can extract the key, so **keep the APK private**.
