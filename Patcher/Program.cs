@@ -376,7 +376,25 @@ namespace Patcher
 				Console.WriteLine("Patched " + aboutRow.FullName);
 			}
 
+			// 17. The cloud session request (the "Securing WiFi" step) sends this phone's name as clientName, read from
+			// Settings.Secure "bluetooth_name". Apps targeting API 32+ get a SecurityException for that key, so the request
+			// was never sent and the app reported "no wifi on robot" after a 30 s switchboard timeout. Use Build.MODEL.
+			ModuleDefMD core = ModuleDefMD.Load(File.ReadAllBytes(Path.Combine(refDir, "core.Droid.dll")), moduleContext);
+			{
+				MethodDef deviceName = Program.FindMethod(Program.FindType(core, "core.Droid.Services.AppInfo.NativeAppInfoService"), "GetDeviceName");
+				Program.Expect(deviceName.Body.Instructions.Any((Instruction i) => i.OpCode == OpCodes.Ldstr && (string)i.Operand == "bluetooth_name"),
+					deviceName.FullName + ": bluetooth_name lookup not found");
+				ModuleDef monoAndroid = assemblyResolver.Resolve(new AssemblyNameInfo("Mono.Android"), core).ManifestModule;
+				IMethod getModel = new Importer(core, ImporterOptions.TryToUseDefs).Import(
+					Program.FindMethod(Program.FindType(monoAndroid, "Android.OS.Build"), "get_Model"));
+				deviceName.Body = new CilBody();
+				deviceName.Body.Instructions.Add(OpCodes.Call.ToInstruction(getModel));
+				deviceName.Body.Instructions.Add(OpCodes.Ret.ToInstruction());
+				Console.WriteLine("Patched " + deviceName.FullName);
+			}
+
 			Directory.CreateDirectory(outDir);
+			core.Write(Path.Combine(outDir, "core.Droid.dll"), Program.PreservingWriterOptions(core));
 			// Keep metadata tokens stable; nothing else in the app has to change.
 			chewie.Write(Path.Combine(outDir, "chewie.Droid.dll"), Program.PreservingWriterOptions(chewie));
 			chewieResources.Write(Path.Combine(outDir, "ChewieResources.dll"), Program.PreservingWriterOptions(chewieResources));
@@ -456,7 +474,7 @@ namespace Patcher
 			assemblyResolver.DefaultModuleContext = moduleContext;
 			List<string> list = new List<string>();
 			int num = 0;
-			foreach (string text in new string[] { "WirePod.dll", "chewie.Droid.dll" })
+			foreach (string text in new string[] { "WirePod.dll", "chewie.Droid.dll", "core.Droid.dll" })
 			{
 				ModuleDefMD moduleDefMD = ModuleDefMD.Load(Path.Combine(outDir, text), moduleContext);
 				bool all = text == "WirePod.dll";

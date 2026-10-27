@@ -165,7 +165,8 @@ $replaced = @(
 	"assemblies/chewie.Droid.dll=$(Join-Path $patched 'chewie.Droid.dll')",
 	"assemblies/ChewieResources.dll=$(Join-Path $patched 'ChewieResources.dll')",
 	"assemblies/WirePod.dll=$(Join-Path $patched 'WirePod.dll')",
-	"assemblies/MvvmCross.Binding.Droid.dll=$(Join-Path $patched 'MvvmCross.Binding.Droid.dll')")
+	"assemblies/MvvmCross.Binding.Droid.dll=$(Join-Path $patched 'MvvmCross.Binding.Droid.dll')",
+	"assemblies/core.Droid.dll=$(Join-Path $patched 'core.Droid.dll')")
 $replaced += "@$resOut"
 # After the rebuilt res/ so the fixed fonts win.
 $replaced += Get-ChildItem (Join-Path $fonts "*.otf") | ForEach-Object { "res/font/$($_.Name)=$($_.FullName)" }
