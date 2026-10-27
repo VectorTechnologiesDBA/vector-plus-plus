@@ -120,8 +120,10 @@ $text = $text.Replace('<activity android:icon="@mipmap/ic_launcher" android:name
 # wire-pod (and the firmware download) are plain HTTP, which Android 9+ blocks by default for apps targeting it.
 $text = $text.Replace('<application android:allowBackup="true"', '<application android:allowNativeHeapPointerTagging="false" android:usesCleartextTraffic="true" android:allowBackup="true"')
 $text = $text.Replace('<receiver android:name="com.appboy.AppboyFcmReceiver"', '<receiver android:exported="true" android:name="com.appboy.AppboyFcmReceiver"')
+# BLUETOOTH_SCAN is declared neverForLocation: without it, Android 12+ only gives scan results to apps holding
+# ACCESS_FINE_LOCATION, and the app only ever asks for coarse location, so "Searching for Vector" never finds him.
 $text = $text.Replace('<uses-permission android:name="android.permission.BLUETOOTH"/>', ('<uses-permission android:name="android.permission.BLUETOOTH"/>' +
-	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_SCAN`"/>" +
+	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_SCAN`" android:usesPermissionFlags=`"neverForLocation`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_CONNECT`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.ACCESS_FINE_LOCATION`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.POST_NOTIFICATIONS`"/>" +
