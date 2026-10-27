@@ -147,6 +147,27 @@ $optOut = "`n        <item name=`"android:windowOptOutEdgeToEdgeEnforcement`">tr
 $xml = [regex]::Replace((Get-Content -Raw $styles), '(<style name="Chewie[^"]*"[^>]*?)\s*/>', "`$1>$optOut`n    </style>")
 $xml = [regex]::Replace($xml, '(<style name="Chewie[^"]*"[^>]*[^/]>)(?!\s*<item name="android:windowOptOut)', "`$1$optOut")
 Set-Content -NoNewline -Encoding utf8 $styles $xml
+# Dead Anki links in the (English-only) string resources: help links go to DDL's help center, store links to DDL's
+# Vector page, and the sign-up and welcome text no longer point at Anki's terms. (Links in code: see Patcher step 18.)
+# Read and written as UTF-8 without BOM explicitly: the file has non-ASCII text, and Windows PowerShell's defaults
+# would mangle it.
+$strings = Join-Path $res "src\res\values\strings.xml"
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$sx = [IO.File]::ReadAllText($strings, $utf8)
+foreach ($link in @(
+	@("https://go.anki.com/vector-app_vector_hc_troubleshooting", "https://support.anki.bot/article/104-troubleshooting-vectore28099s-connection"),
+	@("https://go.anki.com/vector-app_vector_hc_category", "https://support.anki.bot/collection/6-vector"),
+	@("https://go.anki.com/vector-app_product_page", "https://anki.bot/products/vector-robot"))) {
+	if (-not $sx.Contains($link[0])) { throw "strings.xml: $($link[0]) not found" }
+	$sx = $sx.Replace($link[0], $link[1])
+}
+$agreement = [regex]'(<string name="SignUpLoginView\.agreement">)[^<]*(</string>)'
+if (-not $agreement.IsMatch($sx)) { throw "strings.xml: SignUpLoginView.agreement not found" }
+$sx = $agreement.Replace($sx, '${1}Your account only exists on this phone. Nothing is sent to Anki.${2}')
+$learnMore = [regex]'(<string name="WelcomeAgreementView\.messageLink">)[^<]*(</string>)'
+if (-not $learnMore.IsMatch($sx)) { throw "strings.xml: WelcomeAgreementView.messageLink not found" }
+$sx = $learnMore.Replace($sx, '${1}${2}')
+[IO.File]::WriteAllText($strings, $sx, $utf8)
 # Build against the Android 15 framework (tools\android-35\android.jar) so the API 35 theme attribute resolves.
 $framework = Join-Path $Tools "apktool-framework"
 if (-not (Test-Path (Join-Path $framework "1.apk"))) {

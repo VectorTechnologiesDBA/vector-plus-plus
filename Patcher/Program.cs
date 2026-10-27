@@ -393,6 +393,51 @@ namespace Patcher
 				Console.WriteLine("Patched " + deviceName.FullName);
 			}
 
+			// 18. Dead Anki links. About: drop the Anki legal/contact rows. Hardcoded URLs in code: point them at
+			// DDL's help center and shop. (Links in Android string resources are rewritten by the build script.)
+			string[] deadAboutRows = { "About.acknowledgmentsURL", "About.termsURL", "About.policyURL", "About.contactURL" };
+			Program.EditJsonResource(chewieResources, "ChewieResources.Settings.AboutSettingsData.json", delegate(JsonNode node)
+			{
+				JsonArray rows = node["AboutSettingsTableObjs"].AsArray();
+				int removed = 0;
+				for (int i = rows.Count - 1; i >= 0; i--)
+				{
+					if (Array.IndexOf(deadAboutRows, (string)rows[i]["NavigationKey"]) >= 0)
+					{
+						rows.RemoveAt(i);
+						removed++;
+					}
+				}
+				Program.Expect(removed == deadAboutRows.Length, "About: expected " + deadAboutRows.Length + " Anki rows, removed " + removed);
+			});
+			Dictionary<string, string> urlFixes = new Dictionary<string, string>
+			{
+				["https://support.anki.com/"] = "https://support.anki.bot/article/104-troubleshooting-vectore28099s-connection",
+				["https://www.anki.com/en-us/vector"] = "https://anki.bot/products/vector-robot",
+				["https://play.google.com/store/apps/dev?id=8565220581183083218"] = "https://anki.bot/products/vector-robot",
+			};
+			Dictionary<string, int> urlHits = urlFixes.Keys.ToDictionary((string k) => k, (string k) => 0);
+			foreach (TypeDef type17 in chewie.GetTypes())
+			{
+				foreach (MethodDef method17 in type17.Methods.Where((MethodDef m) => m.HasBody))
+				{
+					foreach (Instruction ins in method17.Body.Instructions)
+					{
+						string s17 = ins.Operand as string;
+						if (ins.OpCode == OpCodes.Ldstr && s17 != null && urlFixes.ContainsKey(s17))
+						{
+							urlHits[s17]++;
+							ins.Operand = urlFixes[s17];
+							Console.WriteLine("Patched URL in " + method17.FullName + ": " + s17 + " -> " + urlFixes[s17]);
+						}
+					}
+				}
+			}
+			foreach (KeyValuePair<string, int> hit in urlHits)
+			{
+				Program.Expect(hit.Value == 1, "URL " + hit.Key + ": expected 1 site, found " + hit.Value);
+			}
+
 			Directory.CreateDirectory(outDir);
 			core.Write(Path.Combine(outDir, "core.Droid.dll"), Program.PreservingWriterOptions(core));
 			// Keep metadata tokens stable; nothing else in the app has to change.
