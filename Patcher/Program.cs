@@ -438,6 +438,36 @@ namespace Patcher
 				Program.Expect(hit.Value == 1, "URL " + hit.Key + ": expected 1 site, found " + hit.Value);
 			}
 
+			// 19. A reconnect that fails while the app is in the background (Android blocks its network there) is held by
+			// WirePod.Reconnect and retried once the app is in front, instead of parking on "can't connect to Vector".
+			{
+				TypeDef connModule = Program.FindType(chewie, "chewie.Services.RobotCommunicationConnectionModule");
+				MethodDef reconnectFinished = Program.FindMethod(connModule, "HandleAttemptReconnectToGeneralNetworkFinished");
+				FieldDef reconnectingFlag = connModule.Fields.Single((FieldDef f) => f.Name == "_IsReconnectingToGeneralNetwork");
+				TypeDef reconnectType = Program.FindType(wirePod, "WirePod.Reconnect");
+				Program.FindMethod(reconnectType, "DeferFailure");
+				// Like Attach above: build the reference by hand so the signature uses chewie's own TypeDef rather than
+				// a TypeRef to chewie through WirePod.dll (which Mono can't load).
+				MemberRef deferFailure = new MemberRefUser(chewie, "DeferFailure",
+					MethodSig.CreateStatic(chewie.CorLibTypes.Boolean, new ClassSig(connModule), chewie.CorLibTypes.Boolean, chewie.CorLibTypes.Boolean),
+					importer.Import(reconnectType));
+				IList<Instruction> il19 = reconnectFinished.Body.Instructions;
+				Instruction first19 = il19[0];
+				Instruction[] hook19 =
+				{
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldarg_1.ToInstruction(), OpCodes.Ldarg_2.ToInstruction(),
+					OpCodes.Call.ToInstruction(deferFailure), OpCodes.Brfalse.ToInstruction(first19),
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldc_I4_0.ToInstruction(), OpCodes.Stfld.ToInstruction(reconnectingFlag),
+					OpCodes.Ret.ToInstruction(),
+				};
+				for (int i = 0; i < hook19.Length; i++)
+				{
+					il19.Insert(i, hook19[i]);
+				}
+				reconnectFinished.Body.MaxStack = Math.Max(reconnectFinished.Body.MaxStack, (ushort)3);
+				Console.WriteLine("Patched " + reconnectFinished.FullName);
+			}
+
 			Directory.CreateDirectory(outDir);
 			core.Write(Path.Combine(outDir, "core.Droid.dll"), Program.PreservingWriterOptions(core));
 			// Keep metadata tokens stable; nothing else in the app has to change.
