@@ -99,7 +99,7 @@ $apktool = Join-Path $Tools "apktool.jar"
 Invoke-Native java @("-jar", $apktool, "d", "-f", "-o", (Join-Path $res "src"), $Apk)
 Copy-Item (Join-Path $PSScriptRoot "android\res\drawable\*.xml") (Join-Path $res "src\res\drawable")
 $manifest = Join-Path $res "src\AndroidManifest.xml"
-$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity", "UpdateActivity", "QuickActionsActivity" | ForEach-Object {
+$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity", "UpdateActivity", "QuickActionsActivity", "RemoteActivity" | ForEach-Object {
 	"        <activity android:name=`"com.wirepod.extras.$_`" android:theme=`"@android:style/Theme.Material.NoActionBar`" android:screenOrientation=`"$(if ($_ -eq "DriveActivity" -or $_ -eq "SshActivity") { "sensorLandscape" } else { "portrait" })`"$(if ($_ -eq "UpdateActivity") { ' android:launchMode="singleTop"' })/>" }
 (Get-Content -Raw $manifest).Replace("</application>", (($activities -join "`n") + "`n    </application>")) | Set-Content -NoNewline -Encoding utf8 $manifest
 # Target Android 15 (API 35) so newer Android stops warning that the app is for an old Android version. That needs:

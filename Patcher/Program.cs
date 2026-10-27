@@ -468,6 +468,54 @@ namespace Patcher
 				Console.WriteLine("Patched " + reconnectFinished.FullName);
 			}
 
+			// 20. Remote access (WirePod.Remote). Vector's URLs are "https://" + Host + path (WifiService.GetUri): pass Host
+			// through Remote.MapHost. His certificate is accepted only by the pinned-key check WifiService.ConnectToHost
+			// registers under Host; register the same check under Remote.CertHost(Host) too, so a remote connection is
+			// held to the same check. (Registering under Host again when remote is off just overwrites the same entry.)
+			{
+				Importer coreImporter = new Importer(core, ImporterOptions.TryToUseDefs);
+				TypeDef remoteType = Program.FindType(wirePod, "WirePod.Remote");
+				IMethod mapHost = coreImporter.Import(Program.FindMethod(remoteType, "MapHost"));
+				IMethod certHost = coreImporter.Import(Program.FindMethod(remoteType, "CertHost"));
+				TypeDef wifiService = Program.FindType(core, "core.Services.Wifi.WifiService");
+
+				MethodDef getUri = Program.FindMethod(wifiService, "GetUri");
+				IList<Instruction> uriIl = getUri.Body.Instructions;
+				List<int> hostSites = Enumerable.Range(0, uriIl.Count - 2).Where((int i) =>
+					uriIl[i].OpCode == OpCodes.Ldfld && ((IField)uriIl[i].Operand).Name == "Host" &&
+					uriIl[i + 1].OpCode == OpCodes.Ldarg_1 &&
+					uriIl[i + 2].OpCode == OpCodes.Call && ((IMethod)uriIl[i + 2].Operand).FullName.StartsWith("System.String System.String::Concat(")).ToList();
+				Program.Expect(hostSites.Count == 1, getUri.FullName + ": expected 1 URL-building site, found " + hostSites.Count);
+				uriIl.Insert(hostSites[0] + 1, OpCodes.Call.ToInstruction(mapHost));
+				Console.WriteLine("Patched " + getUri.FullName);
+
+				MethodDef connectToHost = Program.FindMethod(wifiService, "ConnectToHost");
+				IList<Instruction> connIl = connectToHost.Body.Instructions;
+				List<int> registerSites = Enumerable.Range(0, connIl.Count).Where((int i) =>
+					connIl[i].OpCode == OpCodes.Callvirt && ((IMethod)connIl[i].Operand).Name == "RegisterServerCertificateValidationCallback").ToList();
+				Program.Expect(registerSites.Count == 1, connectToHost.FullName + ": expected 1 certificate registration, found " + registerSites.Count);
+				int r = registerSites[0];
+				// The original sequence: ldarg.0; ldfld _HttpService; ldarg.0; ldfld _WifiConfiguration; ldfld Host;
+				// ldarg.0; ldftn Handle...; newobj callback; callvirt Register. Check it, then repeat it with CertHost(Host).
+				Program.Expect(r >= 8 && connIl[r - 8].OpCode == OpCodes.Ldarg_0 && connIl[r - 7].OpCode == OpCodes.Ldfld &&
+					connIl[r - 4].OpCode == OpCodes.Ldfld && ((IField)connIl[r - 4].Operand).Name == "Host" &&
+					connIl[r - 2].OpCode == OpCodes.Ldftn && connIl[r - 1].OpCode == OpCodes.Newobj,
+					connectToHost.FullName + ": certificate registration doesn't have the expected shape");
+				Instruction[] again =
+				{
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldfld.ToInstruction((IField)connIl[r - 7].Operand),
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldfld.ToInstruction((IField)connIl[r - 5].Operand),
+					OpCodes.Ldfld.ToInstruction((IField)connIl[r - 4].Operand), OpCodes.Call.ToInstruction(certHost),
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldftn.ToInstruction((IMethod)connIl[r - 2].Operand),
+					OpCodes.Newobj.ToInstruction((IMethod)connIl[r - 1].Operand), OpCodes.Callvirt.ToInstruction((IMethod)connIl[r].Operand),
+				};
+				for (int i = 0; i < again.Length; i++)
+				{
+					connIl.Insert(r + 1 + i, again[i]);
+				}
+				Console.WriteLine("Patched " + connectToHost.FullName);
+			}
+
 			Directory.CreateDirectory(outDir);
 			core.Write(Path.Combine(outDir, "core.Droid.dll"), Program.PreservingWriterOptions(core));
 			// Keep metadata tokens stable; nothing else in the app has to change.
