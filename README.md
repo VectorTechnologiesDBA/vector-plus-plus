@@ -17,13 +17,15 @@ original `VECTOR.apk` (the build checks that every untouched entry is byte-ident
 | File | Change |
 |---|---|
 | `assemblies/WirePod.dll` | New: all wire-pod logic (source in `WirePod/`) |
-| `assemblies/chewie.Droid.dll` | Eight small patches that call into `WirePod.dll` |
-| `assemblies/ChewieResources.dll` | Analytics off; "Extra features" Settings row; Drive and SSH Home tiles |
+| `assemblies/chewie.Droid.dll` | Small patches that call into `WirePod.dll`, and dead Anki links replaced (see [The code](#the-code)) |
+| `assemblies/core.Droid.dll` | The phone name sent while connecting (Android 12+ blocks reading it), and Vector's address and certificate check for [Remote access](#remote-access) |
+| `assemblies/ChewieResources.dll` | Analytics off; "Extra features" Settings row; Drive and SSH Home tiles; Anki's legal and contact rows removed from About |
 | `classes3.dex` | New: the extra screens (source in `android/src/`) plus JSch for SSH |
 | `AndroidManifest.xml`, `resources.arsc`, `res/` | Rebuilt by apktool to register the new screens and icons; every existing resource keeps its ID (checked) |
-| Android target | Raised from 8.1 (API 27) to 15 (API 35), so newer Android doesn't warn the app is outdated. This needs: plain HTTP allowed (wire-pod), heap pointer tagging off (the 2019 Mono runtime crashes on it), the Android 12+ Bluetooth/notification permissions (asked at startup), `PendingIntent` and runtime-receiver calls in the bundled Java libraries routed through `Compat`, a public replacement for MvvmCross's blocked hidden-API use, and Android 15's edge-to-edge layout turned off |
+| Android target | Raised from 8.1 (API 27) to 15 (API 35), so newer Android doesn't warn the app is outdated. This needs: plain HTTP allowed (wire-pod), heap pointer tagging off (the 2019 Mono runtime crashes on it), the Android 12+ Bluetooth/notification permissions (asked at startup; Bluetooth scanning is declared `neverForLocation`, without which Android hides Vector from the scan), `PendingIntent` and runtime-receiver calls in the bundled Java libraries routed through `Compat`, a public replacement for MvvmCross's blocked hidden-API use, and Android 15's edge-to-edge layout turned off |
+| `res/values/strings.xml` | Dead Anki help and store links point at DDL's help center and Vector page; the sign-up text no longer mentions Anki's terms |
 | `res/font/ttnorms_*.otf` | AAT tables removed so letters like "c" render correctly on newer Android |
-| `assets/wirepod/ssh_root_key` | Optional: your robot's SSH key, if you put `ssh_root_key` next to `build.ps1` |
+| `assets/wirepod/ssh_root_key` | Optional: your robot's SSH key, if you put `ssh_root_key` next to `build.ps1` / `build_linux.py` |
 
 ## Features
 
@@ -34,6 +36,12 @@ On top of working with wire-pod, Vector++ adds:
 - **Check for updates** in **Settings → About**: shows the latest release's notes and installs it.
 - **Android 15 support**: no "built for an older version" warning on current phones.
 - **Firmware updates** from the Internet Archive (escape-pod 2.0.1.6086ep).
+- **Reconnects by itself** when you switch back to the app. Android cuts a backgrounded app's network, which
+  used to leave it on "can't connect to Vector" until you tapped Try Again.
+- **Remote access:** reach Vector away from home, e.g. through your wire-pod machine over Tailscale. See
+  [Remote access](#remote-access).
+- **Working links:** help links go to DDL's help center and store links to DDL's Vector page instead of
+  Anki's dead pages.
 
 **Settings → Extra features** opens wire-pod's options, styled like the rest of the app, without wire-pod's web page:
 
@@ -110,6 +118,46 @@ and sign in again; the dialog appears pre-filled with the current address.
 
 ---
 
+## Remote access
+
+Once Vector is set up, the app talks to him directly at his LAN address (port 443), so away from home it can't
+reach him. **Settings → Extra features → Connection → Remote access** gives it a second address to use:
+
+- **Automatic:** the app checks whether Vector's LAN address answers (up to ~1 s, re-checked every 20 s) and
+  uses the remote address only when it doesn't.
+- **Always:** always use the remote address (handy for testing at home).
+
+The remote address has to lead to Vector's port 443. With [Tailscale](https://tailscale.com) on the wire-pod
+machine and the phone, forward a port on the wire-pod machine's Tailscale IP (its own 443 is taken by wire-pod).
+On Debian / Raspberry Pi OS, as a service that starts at boot:
+
+```bash
+sudo apt install socat
+sudo tee /etc/systemd/system/vector-remote.service >/dev/null <<'EOF'
+[Unit]
+Description=Forward Tailscale :8443 to Vector :443
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:8443,bind=<wire-pod's Tailscale IP>,fork,reuseaddr TCP:<Vector's LAN IP>:443
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl enable --now vector-remote
+```
+
+Binding to the Tailscale IP keeps the forward off your LAN and the internet. Then in the app: Remote access →
+**Automatic**, host = wire-pod's Tailscale IP, port `8443` → **Save** → **Test remote address**, and reopen the
+app. Give Vector a fixed LAN IP (a DHCP reservation on your router) so the forward keeps pointing at him.
+
+Security doesn't change: the app accepts only Vector's own certificate (the public key it saved during setup),
+whichever address it connects to. Extra features (Drive, Talk, …) go through wire-pod rather than straight to
+Vector, so for those away from home, sign in with wire-pod's Tailscale address.
+
 ## How it works
 
 ### Why the stock app can't use wire-pod
@@ -157,6 +205,8 @@ the key is rejected, it's forgotten and you'll be asked for it again.
 | `RobotSetup.cs` | Detects robots that can't reach their server and runs wire-pod's SSH setup |
 | `SshKeyStore.cs` | File picker for the SSH key; keeps it in the app's private storage |
 | `Ui.cs` | Shared dialog helpers |
+| `Reconnect.cs` | Holds a reconnect that failed while the app was in the background and retries it once the app is in front |
+| `Remote.cs` | Remote access: picks Vector's address (LAN or remote) and names the host his certificate check is registered under |
 
 Patches to `chewie.Droid.dll` (applied by `Patcher/` with dnlib):
 
@@ -168,9 +218,19 @@ Patches to `chewie.Droid.dll` (applied by `Patcher/` with dnlib):
 | `RobotCommunicationService.OtaUrl` (getter) | returns `WirePodConfig.OtaUrl(...)` |
 | `RobotCommunicationConnectionModule` (auto-connect) | the cert URL's `string.Concat` → `WirePodConfig.SessionCertUrl(...)` |
 | `RobotCommunicationService.Initialize` | ends with `RobotSetup.Attach(this)` |
+| `RobotCommunicationConnectionModule.HandleAttemptReconnectToGeneralNetworkFinished` | starts with `Reconnect.DeferFailure(...)`; if it takes over, the failure isn't reported |
+| Hardcoded URLs (`support.anki.com`, `anki.com/en-us/vector`, Anki's Play Store page) | DDL's help center and Vector page |
+
+Patches to `core.Droid.dll`:
+
+| Method | Patch |
+|---|---|
+| `NativeAppInfoService.GetDeviceName` | returns `Build.MODEL`. It read `Settings.Secure "bluetooth_name"`, which throws for apps targeting Android 12L+, so the connection request ("Securing WiFi") was never sent |
+| `WifiService.GetUri` | Vector's host goes through `Remote.MapHost(...)` |
+| `WifiService.ConnectToHost` | also registers the pinned-key certificate check under `Remote.CertHost(...)` |
 
 `ChewieResources.dll`: in the embedded `DASConfig.json`, `ShouldSyncNetwork` is set to `false` and
-`LogLevels` to `[]`.
+`LogLevels` to `[]`; in `AboutSettingsData.json`, the Terms, Privacy, Contact and Acknowledgments rows are removed.
 
 ### Quirks of the 2019 runtime worth knowing
 
@@ -182,6 +242,8 @@ Patches to `chewie.Droid.dll` (applied by `Patcher/` with dnlib):
   existing activity-result event rather than an `OnActivityResult` override.
 - **Thread floods can deadlock the old Mono runtime on Android 10+** (garbage collector vs. Android's
   thread-list lock). This is why analytics is turned off.
+- **`JNIEnv.FindClass` returns a global reference** in this runtime. Freeing it with `DeleteLocalRef` is a
+  fatal JNI error that kills the app; keep class references (or delete them with `DeleteGlobalRef`).
 - `DAS.Debug` is compiled out of this build. `WirePod.dll` logs with `DAS.Event` / `DAS.Warn`, which show
   in `adb logcat -s mono-stdout`.
 
@@ -196,6 +258,8 @@ Patches to `chewie.Droid.dll` (applied by `Patcher/` with dnlib):
 | "wire-pod couldn't set up Vector … SSH" | Wrong key, or the robot isn't OSKR/dev-unlocked, or wire-pod can't reach the robot. The key is forgotten after a rejection; you'll be asked again. |
 | Key file doesn't show in the picker | Open ☰ → **Downloads**. Files copied with `adb push` keep their old date and sort far down in Recent. |
 | "Couldn't download robot cert" | wire-pod doesn't have Vector's certificate. It saves it when Vector first authenticates with it; re-run setup. |
+| "Searching for Vector" never finds him | Put him on the charger and double-press his back button. Check Bluetooth is on and the app has the Nearby devices permission. If he's paired in the phone's Bluetooth settings from an older app, unpair him there. |
+| Remote access doesn't connect | Tap **Test remote address**: if it fails, check Tailscale is connected on the phone and `systemctl status vector-remote` on the wire-pod machine. If the test works but the app doesn't, check the forward points at Vector's current LAN IP. |
 | App freezes ("not responding") | Shouldn't happen with analytics off. If it does, capture `adb logcat` and `adb shell dumpsys activity lastanr-traces`. |
 
 Useful logs:
@@ -252,7 +316,7 @@ the script; skipped if missing), `-Tools <dir>`, `-Keystore` / `-KeystorePasswor
 The build:
 1. extracts the app's assemblies from the original APK;
 2. compiles `WirePod/*.cs` against them;
-3. patches `chewie.Droid.dll` and `ChewieResources.dll`, and fixes the fonts;
+3. patches `chewie.Droid.dll`, `core.Droid.dll` and `ChewieResources.dll`, and fixes the fonts;
 4. compiles `android/src/` with JSch into `classes3.dex`, and rebuilds the manifest and resources with apktool;
 5. writes a new APK, copying every other entry unchanged; signs it (apksigner if on `PATH`, else
    jarsigner v1) and aligns it;
@@ -261,6 +325,28 @@ The build:
 
 The first build creates `wirepod-debug.keystore` (password `android`). Keep it: builds signed with the same
 key install over each other without losing app data.
+
+### On Linux
+
+`build_linux.py` does the same build without Windows: the same steps, `tools/` folder, defaults and checks.
+You need the .NET 8 SDK, a JDK 11+ and Python 3, plus the same files in `tools/`, except that
+`android-4.1.1.4.jar` and `json-20080701.jar` aren't needed and `apksigner` can come from `PATH` instead
+(Debian/Ubuntu: `sudo apt install apksigner`).
+
+```bash
+python3 build_linux.py
+```
+
+Options: `--apk`, `--out`, `--tools`, `--dnlib <dnlib.dll>`, `--ssh-key <file>`, `--keystore`,
+`--keystore-password`, `--key-alias` (see `--help`).
+
+If you can't download `r8-8.5.35.jar` (d8), the build uses `dx` instead (Debian/Ubuntu package
+`dalvik-exchange`). `dx` can't handle Java 8 lambdas, so build a lambda-free JSch first:
+
+```bash
+git clone --depth 1 --branch jsch-0.2.20 https://github.com/mwiede/jsch.git
+python3 scripts/jsch_nolambda.py jsch tools/jsch-0.2.20-nolambda.jar
+```
 
 ## Layout
 
@@ -272,6 +358,8 @@ key install over each other without losing app data.
 | `ssh_root_key` | Optional robot SSH key to bundle (not committed) |
 | `Patcher/` | Build tool: extract, IL patching (dnlib), APK repack/align/verify |
 | `build.ps1`, `build.cmd` | Run the whole build |
+| `build_linux.py` | The same build on Linux |
+| `scripts/jsch_nolambda.py` | Builds a lambda-free JSch for `build_linux.py`'s `dx` fallback |
 | `build/` | Intermediate files (recreated each build, not committed) |
 | `VECTOR.apk` | Your copy of the original app (not committed) |
 | `VECTOR-wirepod.apk` | The result (not committed) |
