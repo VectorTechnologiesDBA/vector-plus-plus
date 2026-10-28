@@ -19,7 +19,7 @@ original `VECTOR.apk` (the build checks that every untouched entry is byte-ident
 | `assemblies/WirePod.dll` | New: all wire-pod logic (source in `WirePod/`) |
 | `assemblies/chewie.Droid.dll` | Small patches that call into `WirePod.dll`, and dead Anki links replaced (see [The code](#the-code)) |
 | `assemblies/core.Droid.dll` | The phone name sent while connecting (Android 12+ blocks reading it), and Vector's address and certificate check for [Remote access](#remote-access) |
-| `assemblies/ChewieResources.dll` | Analytics off; "Extra features" Settings row; Drive and SSH Home tiles; Anki's legal and contact rows removed from About |
+| `assemblies/ChewieResources.dll` | Analytics off; "Extra features" Settings row; Drive and SSH Home tiles; Anki's legal and contact rows removed from About; the how-to videos' "More Videos" link goes to DDL's help center |
 | `classes3.dex` | New: the extra screens (source in `android/src/`) plus JSch for SSH |
 | `AndroidManifest.xml`, `resources.arsc`, `res/` | Rebuilt by apktool to register the new screens and icons; every existing resource keeps its ID (checked) |
 | Android target | Raised from 8.1 (API 27) to 15 (API 35), so newer Android doesn't warn the app is outdated. This needs: plain HTTP allowed (wire-pod), heap pointer tagging off (the 2019 Mono runtime crashes on it), the Android 12+ Bluetooth/notification permissions (asked at startup; Bluetooth scanning is declared `neverForLocation`, without which Android hides Vector from the scan), `PendingIntent` and runtime-receiver calls in the bundled Java libraries routed through `Compat`, a public replacement for MvvmCross's blocked hidden-API use, and Android 15's edge-to-edge layout turned off |
@@ -40,8 +40,8 @@ On top of working with wire-pod, Vector++ adds:
   used to leave it on "can't connect to Vector" until you tapped Try Again.
 - **Remote access:** reach Vector away from home, e.g. through your wire-pod machine over Tailscale. See
   [Remote access](#remote-access).
-- **Working links:** help links go to DDL's help center and store links to DDL's Vector page instead of
-  Anki's dead pages.
+- **Working links:** help links (including "More Videos" on the how-to videos screen) go to DDL's help center
+  and store links to DDL's Vector page instead of Anki's dead pages.
 
 **Settings → Extra features** opens wire-pod's options, styled like the rest of the app, without wire-pod's web page:
 

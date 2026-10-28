@@ -410,6 +410,14 @@ namespace Patcher
 				}
 				Program.Expect(removed == deadAboutRows.Length, "About: expected " + deadAboutRows.Length + " Anki rows, removed " + removed);
 			});
+			// The how-to videos screen ("More Videos" link) points at a dead go.anki.com page; send it to DDL's
+			// Vector help center. The bundled tutorial clips are local assets and keep working.
+			Program.EditJsonResource(chewieResources, "ChewieResources.ViewData.VideoInfoCardData.json", delegate(JsonNode node)
+			{
+				string old = (string)node["MoreVideosLink"];
+				Program.Expect(old == "https://go.anki.com/vector-app_video_tutorials", "VideoInfoCardData: unexpected MoreVideosLink " + old);
+				node["MoreVideosLink"] = "https://support.anki.bot/collection/6-vector";
+			});
 			Dictionary<string, string> urlFixes = new Dictionary<string, string>
 			{
 				["https://support.anki.com/"] = "https://support.anki.bot/article/104-troubleshooting-vectore28099s-connection",
