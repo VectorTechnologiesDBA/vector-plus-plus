@@ -3,7 +3,7 @@
 Vector++ patches the original Anki Vector Android app (1.5.0) so it works with a
 [wire-pod](https://github.com/kercre123/wire-pod) server instead of Anki's cloud, which no longer exists.
 
-> **Project status:** Vector++ 1.2.3 is the last planned update for the foreseeable future: it does what I set
+> **Project status:** Vector++ 1.2.4 is the last planned update for the foreseeable future: it does what I set
 > out to do. I'm still happy to fix problems, so please report bugs in
 > [GitHub Issues](https://github.com/VectorTechnologiesDBA/vector-plus-plus/issues).
 
