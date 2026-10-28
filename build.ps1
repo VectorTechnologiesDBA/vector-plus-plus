@@ -99,7 +99,7 @@ $apktool = Join-Path $Tools "apktool.jar"
 Invoke-Native java @("-jar", $apktool, "d", "-f", "-o", (Join-Path $res "src"), $Apk)
 Copy-Item (Join-Path $PSScriptRoot "android\res\drawable\*.xml") (Join-Path $res "src\res\drawable")
 $manifest = Join-Path $res "src\AndroidManifest.xml"
-$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity", "UpdateActivity", "QuickActionsActivity" | ForEach-Object {
+$activities = "ExtrasActivity", "WeatherActivity", "KnowledgeActivity", "TalkActivity", "DriveActivity", "SshActivity", "EyeColorActivity", "UpdateActivity", "QuickActionsActivity", "RemoteActivity" | ForEach-Object {
 	"        <activity android:name=`"com.wirepod.extras.$_`" android:theme=`"@android:style/Theme.Material.NoActionBar`" android:screenOrientation=`"$(if ($_ -eq "DriveActivity" -or $_ -eq "SshActivity") { "sensorLandscape" } else { "portrait" })`"$(if ($_ -eq "UpdateActivity") { ' android:launchMode="singleTop"' })/>" }
 (Get-Content -Raw $manifest).Replace("</application>", (($activities -join "`n") + "`n    </application>")) | Set-Content -NoNewline -Encoding utf8 $manifest
 # Target Android 15 (API 35) so newer Android stops warning that the app is for an old Android version. That needs:
@@ -120,8 +120,10 @@ $text = $text.Replace('<activity android:icon="@mipmap/ic_launcher" android:name
 # wire-pod (and the firmware download) are plain HTTP, which Android 9+ blocks by default for apps targeting it.
 $text = $text.Replace('<application android:allowBackup="true"', '<application android:allowNativeHeapPointerTagging="false" android:usesCleartextTraffic="true" android:allowBackup="true"')
 $text = $text.Replace('<receiver android:name="com.appboy.AppboyFcmReceiver"', '<receiver android:exported="true" android:name="com.appboy.AppboyFcmReceiver"')
+# BLUETOOTH_SCAN is declared neverForLocation: without it, Android 12+ only gives scan results to apps holding
+# ACCESS_FINE_LOCATION, and the app only ever asks for coarse location, so "Searching for Vector" never finds him.
 $text = $text.Replace('<uses-permission android:name="android.permission.BLUETOOTH"/>', ('<uses-permission android:name="android.permission.BLUETOOTH"/>' +
-	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_SCAN`"/>" +
+	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_SCAN`" android:usesPermissionFlags=`"neverForLocation`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.BLUETOOTH_CONNECT`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.ACCESS_FINE_LOCATION`"/>" +
 	"`n    <uses-permission android:name=`"android.permission.POST_NOTIFICATIONS`"/>" +
@@ -145,6 +147,27 @@ $optOut = "`n        <item name=`"android:windowOptOutEdgeToEdgeEnforcement`">tr
 $xml = [regex]::Replace((Get-Content -Raw $styles), '(<style name="Chewie[^"]*"[^>]*?)\s*/>', "`$1>$optOut`n    </style>")
 $xml = [regex]::Replace($xml, '(<style name="Chewie[^"]*"[^>]*[^/]>)(?!\s*<item name="android:windowOptOut)', "`$1$optOut")
 Set-Content -NoNewline -Encoding utf8 $styles $xml
+# Dead Anki links in the (English-only) string resources: help links go to DDL's help center, store links to DDL's
+# Vector page, and the sign-up and welcome text no longer point at Anki's terms. (Links in code: see Patcher step 18.)
+# Read and written as UTF-8 without BOM explicitly: the file has non-ASCII text, and Windows PowerShell's defaults
+# would mangle it.
+$strings = Join-Path $res "src\res\values\strings.xml"
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+$sx = [IO.File]::ReadAllText($strings, $utf8)
+foreach ($link in @(
+	@("https://go.anki.com/vector-app_vector_hc_troubleshooting", "https://support.anki.bot/article/104-troubleshooting-vectore28099s-connection"),
+	@("https://go.anki.com/vector-app_vector_hc_category", "https://support.anki.bot/collection/6-vector"),
+	@("https://go.anki.com/vector-app_product_page", "https://anki.bot/products/vector-robot"))) {
+	if (-not $sx.Contains($link[0])) { throw "strings.xml: $($link[0]) not found" }
+	$sx = $sx.Replace($link[0], $link[1])
+}
+$agreement = [regex]'(<string name="SignUpLoginView\.agreement">)[^<]*(</string>)'
+if (-not $agreement.IsMatch($sx)) { throw "strings.xml: SignUpLoginView.agreement not found" }
+$sx = $agreement.Replace($sx, '${1}Your account only exists on this phone. Nothing is sent to Anki.${2}')
+$learnMore = [regex]'(<string name="WelcomeAgreementView\.messageLink">)[^<]*(</string>)'
+if (-not $learnMore.IsMatch($sx)) { throw "strings.xml: WelcomeAgreementView.messageLink not found" }
+$sx = $learnMore.Replace($sx, '${1}${2}')
+[IO.File]::WriteAllText($strings, $sx, $utf8)
 # Build against the Android 15 framework (tools\android-35\android.jar) so the API 35 theme attribute resolves.
 $framework = Join-Path $Tools "apktool-framework"
 if (-not (Test-Path (Join-Path $framework "1.apk"))) {
@@ -163,7 +186,8 @@ $replaced = @(
 	"assemblies/chewie.Droid.dll=$(Join-Path $patched 'chewie.Droid.dll')",
 	"assemblies/ChewieResources.dll=$(Join-Path $patched 'ChewieResources.dll')",
 	"assemblies/WirePod.dll=$(Join-Path $patched 'WirePod.dll')",
-	"assemblies/MvvmCross.Binding.Droid.dll=$(Join-Path $patched 'MvvmCross.Binding.Droid.dll')")
+	"assemblies/MvvmCross.Binding.Droid.dll=$(Join-Path $patched 'MvvmCross.Binding.Droid.dll')",
+	"assemblies/core.Droid.dll=$(Join-Path $patched 'core.Droid.dll')")
 $replaced += "@$resOut"
 # After the rebuilt res/ so the fixed fonts win.
 $replaced += Get-ChildItem (Join-Path $fonts "*.otf") | ForEach-Object { "res/font/$($_.Name)=$($_.FullName)" }

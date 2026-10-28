@@ -31,6 +31,9 @@ public class ExtrasActivity extends Screen {
         open("Weather", WeatherActivity.class);
         open("Knowledge", KnowledgeActivity.class);
 
+        heading("Connection");
+        open("Remote access", RemoteActivity.class);
+
         if (Wp.extrasEnabled(this)) {
             heading("Vector");
             open("Talk", TalkActivity.class);

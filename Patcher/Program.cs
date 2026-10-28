@@ -376,7 +376,156 @@ namespace Patcher
 				Console.WriteLine("Patched " + aboutRow.FullName);
 			}
 
+			// 17. The cloud session request (the "Securing WiFi" step) sends this phone's name as clientName, read from
+			// Settings.Secure "bluetooth_name". Apps targeting API 32+ get a SecurityException for that key, so the request
+			// was never sent and the app reported "no wifi on robot" after a 30 s switchboard timeout. Use Build.MODEL.
+			ModuleDefMD core = ModuleDefMD.Load(File.ReadAllBytes(Path.Combine(refDir, "core.Droid.dll")), moduleContext);
+			{
+				MethodDef deviceName = Program.FindMethod(Program.FindType(core, "core.Droid.Services.AppInfo.NativeAppInfoService"), "GetDeviceName");
+				Program.Expect(deviceName.Body.Instructions.Any((Instruction i) => i.OpCode == OpCodes.Ldstr && (string)i.Operand == "bluetooth_name"),
+					deviceName.FullName + ": bluetooth_name lookup not found");
+				ModuleDef monoAndroid = assemblyResolver.Resolve(new AssemblyNameInfo("Mono.Android"), core).ManifestModule;
+				IMethod getModel = new Importer(core, ImporterOptions.TryToUseDefs).Import(
+					Program.FindMethod(Program.FindType(monoAndroid, "Android.OS.Build"), "get_Model"));
+				deviceName.Body = new CilBody();
+				deviceName.Body.Instructions.Add(OpCodes.Call.ToInstruction(getModel));
+				deviceName.Body.Instructions.Add(OpCodes.Ret.ToInstruction());
+				Console.WriteLine("Patched " + deviceName.FullName);
+			}
+
+			// 18. Dead Anki links. About: drop the Anki legal/contact rows. Hardcoded URLs in code: point them at
+			// DDL's help center and shop. (Links in Android string resources are rewritten by the build script.)
+			string[] deadAboutRows = { "About.acknowledgmentsURL", "About.termsURL", "About.policyURL", "About.contactURL" };
+			Program.EditJsonResource(chewieResources, "ChewieResources.Settings.AboutSettingsData.json", delegate(JsonNode node)
+			{
+				JsonArray rows = node["AboutSettingsTableObjs"].AsArray();
+				int removed = 0;
+				for (int i = rows.Count - 1; i >= 0; i--)
+				{
+					if (Array.IndexOf(deadAboutRows, (string)rows[i]["NavigationKey"]) >= 0)
+					{
+						rows.RemoveAt(i);
+						removed++;
+					}
+				}
+				Program.Expect(removed == deadAboutRows.Length, "About: expected " + deadAboutRows.Length + " Anki rows, removed " + removed);
+			});
+			// The how-to videos screen ("More Videos" link) points at a dead go.anki.com page; send it to DDL's
+			// Vector help center. The bundled tutorial clips are local assets and keep working.
+			Program.EditJsonResource(chewieResources, "ChewieResources.ViewData.VideoInfoCardData.json", delegate(JsonNode node)
+			{
+				string old = (string)node["MoreVideosLink"];
+				Program.Expect(old == "https://go.anki.com/vector-app_video_tutorials", "VideoInfoCardData: unexpected MoreVideosLink " + old);
+				node["MoreVideosLink"] = "https://support.anki.bot/collection/6-vector";
+			});
+			Dictionary<string, string> urlFixes = new Dictionary<string, string>
+			{
+				["https://support.anki.com/"] = "https://support.anki.bot/article/104-troubleshooting-vectore28099s-connection",
+				["https://www.anki.com/en-us/vector"] = "https://anki.bot/products/vector-robot",
+				["https://play.google.com/store/apps/dev?id=8565220581183083218"] = "https://anki.bot/products/vector-robot",
+			};
+			Dictionary<string, int> urlHits = urlFixes.Keys.ToDictionary((string k) => k, (string k) => 0);
+			foreach (TypeDef type17 in chewie.GetTypes())
+			{
+				foreach (MethodDef method17 in type17.Methods.Where((MethodDef m) => m.HasBody))
+				{
+					foreach (Instruction ins in method17.Body.Instructions)
+					{
+						string s17 = ins.Operand as string;
+						if (ins.OpCode == OpCodes.Ldstr && s17 != null && urlFixes.ContainsKey(s17))
+						{
+							urlHits[s17]++;
+							ins.Operand = urlFixes[s17];
+							Console.WriteLine("Patched URL in " + method17.FullName + ": " + s17 + " -> " + urlFixes[s17]);
+						}
+					}
+				}
+			}
+			foreach (KeyValuePair<string, int> hit in urlHits)
+			{
+				Program.Expect(hit.Value == 1, "URL " + hit.Key + ": expected 1 site, found " + hit.Value);
+			}
+
+			// 19. A reconnect that fails while the app is in the background (Android blocks its network there) is held by
+			// WirePod.Reconnect and retried once the app is in front, instead of parking on "can't connect to Vector".
+			{
+				TypeDef connModule = Program.FindType(chewie, "chewie.Services.RobotCommunicationConnectionModule");
+				MethodDef reconnectFinished = Program.FindMethod(connModule, "HandleAttemptReconnectToGeneralNetworkFinished");
+				FieldDef reconnectingFlag = connModule.Fields.Single((FieldDef f) => f.Name == "_IsReconnectingToGeneralNetwork");
+				TypeDef reconnectType = Program.FindType(wirePod, "WirePod.Reconnect");
+				Program.FindMethod(reconnectType, "DeferFailure");
+				// Like Attach above: build the reference by hand so the signature uses chewie's own TypeDef rather than
+				// a TypeRef to chewie through WirePod.dll (which Mono can't load).
+				MemberRef deferFailure = new MemberRefUser(chewie, "DeferFailure",
+					MethodSig.CreateStatic(chewie.CorLibTypes.Boolean, new ClassSig(connModule), chewie.CorLibTypes.Boolean, chewie.CorLibTypes.Boolean),
+					importer.Import(reconnectType));
+				IList<Instruction> il19 = reconnectFinished.Body.Instructions;
+				Instruction first19 = il19[0];
+				Instruction[] hook19 =
+				{
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldarg_1.ToInstruction(), OpCodes.Ldarg_2.ToInstruction(),
+					OpCodes.Call.ToInstruction(deferFailure), OpCodes.Brfalse.ToInstruction(first19),
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldc_I4_0.ToInstruction(), OpCodes.Stfld.ToInstruction(reconnectingFlag),
+					OpCodes.Ret.ToInstruction(),
+				};
+				for (int i = 0; i < hook19.Length; i++)
+				{
+					il19.Insert(i, hook19[i]);
+				}
+				reconnectFinished.Body.MaxStack = Math.Max(reconnectFinished.Body.MaxStack, (ushort)3);
+				Console.WriteLine("Patched " + reconnectFinished.FullName);
+			}
+
+			// 20. Remote access (WirePod.Remote). Vector's URLs are "https://" + Host + path (WifiService.GetUri): pass Host
+			// through Remote.MapHost. His certificate is accepted only by the pinned-key check WifiService.ConnectToHost
+			// registers under Host; register the same check under Remote.CertHost(Host) too, so a remote connection is
+			// held to the same check. (Registering under Host again when remote is off just overwrites the same entry.)
+			{
+				Importer coreImporter = new Importer(core, ImporterOptions.TryToUseDefs);
+				TypeDef remoteType = Program.FindType(wirePod, "WirePod.Remote");
+				IMethod mapHost = coreImporter.Import(Program.FindMethod(remoteType, "MapHost"));
+				IMethod certHost = coreImporter.Import(Program.FindMethod(remoteType, "CertHost"));
+				TypeDef wifiService = Program.FindType(core, "core.Services.Wifi.WifiService");
+
+				MethodDef getUri = Program.FindMethod(wifiService, "GetUri");
+				IList<Instruction> uriIl = getUri.Body.Instructions;
+				List<int> hostSites = Enumerable.Range(0, uriIl.Count - 2).Where((int i) =>
+					uriIl[i].OpCode == OpCodes.Ldfld && ((IField)uriIl[i].Operand).Name == "Host" &&
+					uriIl[i + 1].OpCode == OpCodes.Ldarg_1 &&
+					uriIl[i + 2].OpCode == OpCodes.Call && ((IMethod)uriIl[i + 2].Operand).FullName.StartsWith("System.String System.String::Concat(")).ToList();
+				Program.Expect(hostSites.Count == 1, getUri.FullName + ": expected 1 URL-building site, found " + hostSites.Count);
+				uriIl.Insert(hostSites[0] + 1, OpCodes.Call.ToInstruction(mapHost));
+				Console.WriteLine("Patched " + getUri.FullName);
+
+				MethodDef connectToHost = Program.FindMethod(wifiService, "ConnectToHost");
+				IList<Instruction> connIl = connectToHost.Body.Instructions;
+				List<int> registerSites = Enumerable.Range(0, connIl.Count).Where((int i) =>
+					connIl[i].OpCode == OpCodes.Callvirt && ((IMethod)connIl[i].Operand).Name == "RegisterServerCertificateValidationCallback").ToList();
+				Program.Expect(registerSites.Count == 1, connectToHost.FullName + ": expected 1 certificate registration, found " + registerSites.Count);
+				int r = registerSites[0];
+				// The original sequence: ldarg.0; ldfld _HttpService; ldarg.0; ldfld _WifiConfiguration; ldfld Host;
+				// ldarg.0; ldftn Handle...; newobj callback; callvirt Register. Check it, then repeat it with CertHost(Host).
+				Program.Expect(r >= 8 && connIl[r - 8].OpCode == OpCodes.Ldarg_0 && connIl[r - 7].OpCode == OpCodes.Ldfld &&
+					connIl[r - 4].OpCode == OpCodes.Ldfld && ((IField)connIl[r - 4].Operand).Name == "Host" &&
+					connIl[r - 2].OpCode == OpCodes.Ldftn && connIl[r - 1].OpCode == OpCodes.Newobj,
+					connectToHost.FullName + ": certificate registration doesn't have the expected shape");
+				Instruction[] again =
+				{
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldfld.ToInstruction((IField)connIl[r - 7].Operand),
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldfld.ToInstruction((IField)connIl[r - 5].Operand),
+					OpCodes.Ldfld.ToInstruction((IField)connIl[r - 4].Operand), OpCodes.Call.ToInstruction(certHost),
+					OpCodes.Ldarg_0.ToInstruction(), OpCodes.Ldftn.ToInstruction((IMethod)connIl[r - 2].Operand),
+					OpCodes.Newobj.ToInstruction((IMethod)connIl[r - 1].Operand), OpCodes.Callvirt.ToInstruction((IMethod)connIl[r].Operand),
+				};
+				for (int i = 0; i < again.Length; i++)
+				{
+					connIl.Insert(r + 1 + i, again[i]);
+				}
+				Console.WriteLine("Patched " + connectToHost.FullName);
+			}
+
 			Directory.CreateDirectory(outDir);
+			core.Write(Path.Combine(outDir, "core.Droid.dll"), Program.PreservingWriterOptions(core));
 			// Keep metadata tokens stable; nothing else in the app has to change.
 			chewie.Write(Path.Combine(outDir, "chewie.Droid.dll"), Program.PreservingWriterOptions(chewie));
 			chewieResources.Write(Path.Combine(outDir, "ChewieResources.dll"), Program.PreservingWriterOptions(chewieResources));
@@ -456,7 +605,7 @@ namespace Patcher
 			assemblyResolver.DefaultModuleContext = moduleContext;
 			List<string> list = new List<string>();
 			int num = 0;
-			foreach (string text in new string[] { "WirePod.dll", "chewie.Droid.dll" })
+			foreach (string text in new string[] { "WirePod.dll", "chewie.Droid.dll", "core.Droid.dll" })
 			{
 				ModuleDefMD moduleDefMD = ModuleDefMD.Load(Path.Combine(outDir, text), moduleContext);
 				bool all = text == "WirePod.dll";
